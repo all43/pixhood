@@ -1,0 +1,14 @@
+{
+  "name": "pixhood-server",
+  "version": "1.0.0",
+  "description": "Pixhood backend — Node.js + Redis + native WebSockets",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "redis": "^4.6.13",
+    "ws": "^8.17.0"
+  }
+}
