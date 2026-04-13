@@ -88,6 +88,60 @@ pixhood/
 
 ---
 
+## Deploying
+
+Frontend on **Cloudflare Pages**, backend on **Fly.io** with managed Upstash Redis.
+
+### Prerequisites
+
+- [`flyctl`](https://fly.io/docs/hands-on/install-flyctl/) — `brew install flyctl && fly auth login`
+- [`wrangler`](https://developers.cloudflare.com/workers/wrangler/install-and-update/) — `npm i -g wrangler && wrangler login`
+
+### 1. Backend (Fly.io)
+
+```bash
+cd server
+fly launch --name pixhood --region fra --no-deploy --yes
+# ↳ auto-provisions Upstash Redis and sets REDIS_URL
+
+fly secrets set CORS_ORIGIN=https://pixhood.pages.dev
+fly deploy
+```
+
+Backend is now live at `https://pixhood.fly.dev`.
+
+> If Fly picked a different app name, update the two `pixhood.fly.dev` references in `config.js`.
+
+### 2. Frontend (Cloudflare Pages)
+
+```bash
+cd ..   # repo root
+wrangler pages project create pixhood --production-branch main
+wrangler pages deploy . --project-name pixhood --branch main
+```
+
+Frontend is now live at `https://pixhood.pages.dev`.
+
+### Re-deploying
+
+```bash
+# Backend
+cd server && fly deploy
+
+# Frontend
+cd .. && wrangler pages deploy . --project-name pixhood --branch main
+```
+
+### Environment variables
+
+| Where | Variable | Description |
+|-------|----------|-------------|
+| Fly.io | `REDIS_URL` | Set automatically by `fly launch` |
+| Fly.io | `CORS_ORIGIN` | Cloudflare Pages URL (e.g. `https://pixhood.pages.dev`) |
+| Fly.io | `PORT` | Defaults to `3000` |
+
+---
+
 ## Prototype scope
 
 This is a minimal working prototype. Out of scope:
