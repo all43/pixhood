@@ -5,6 +5,26 @@ let userMarker;
 let boundaryRect;
 const pixelLayers = {};
 const childLayers = {};
+const childrenCache = {};
+
+function computeParentDisplay(children) {
+  if (!children || children.length === 0) return { color: null, opacity: 0 };
+
+  let r = 0, g = 0, b = 0;
+  for (const c of children) {
+    const hex = c.color;
+    r += parseInt(hex.slice(1, 3), 16);
+    g += parseInt(hex.slice(3, 5), 16);
+    b += parseInt(hex.slice(5, 7), 16);
+  }
+  const n = children.length;
+  const toHex = v => Math.round(v / n).toString(16).padStart(2, '0');
+  const color = `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  const totalCells = CONFIG.SUB_GRID_SIZE * CONFIG.SUB_GRID_SIZE;
+  const opacity = Math.sqrt(n / totalCells);
+
+  return { color, opacity };
+}
 
 function initMap(lat, lng) {
   map = L.map('map', {
@@ -35,6 +55,7 @@ function initMap(lat, lng) {
 function onZoomChange() {
   updateGridVisibility();
   updateSubGridVisibility();
+  updateChildrenVisibility();
 }
 
 function getViewportBounds() {
@@ -111,54 +132,61 @@ function createSubGridLayer() {
       const nw = map.unproject([coords.x * tileSize.x, coords.y * tileSize.y], coords.z);
       const se = map.unproject([(coords.x + 1) * tileSize.x, (coords.y + 1) * tileSize.y], coords.z);
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-      ctx.lineWidth = 1;
-
       const latMin = se.lat;
       const latMax = nw.lat;
       const lngMin = nw.lng;
       const lngMax = se.lng;
-      const latCenter = (latMin + latMax) / 2;
-      const lngCenter = (lngMin + lngMax) / 2;
 
-      const tileSnap = snapToTile(latCenter, lngCenter);
-      const bounds = tileBounds(tileSnap.key);
-      const parentLatSpan = bounds.ne[0] - bounds.sw[0];
-      const parentLngSpan = bounds.ne[1] - bounds.sw[1];
+      const tileSnap = snapToTile((latMin + latMax) / 2, (lngMin + lngMax) / 2);
+      const parentLatSpan = CONFIG.TILE_SIZE;
+      const parentLngSpan = CONFIG.LNG_STEP;
       const subLatStep = parentLatSpan / CONFIG.SUB_GRID_SIZE;
       const subLngStep = parentLngSpan / CONFIG.SUB_GRID_SIZE;
 
-      for (let i = 0; i <= CONFIG.SUB_GRID_SIZE; i++) {
-        const lat = bounds.sw[0] + i * subLatStep;
-        if (lat < latMin || lat > latMax) continue;
-        const y = map.project([lat, lngCenter], coords.z).y - coords.y * tileSize.y;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(tileSize.x, y);
-        ctx.stroke();
-      }
+      const latStart = Math.floor(latMin / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
+      const lngStart = Math.floor(lngMin / CONFIG.LNG_STEP) * CONFIG.LNG_STEP;
 
-      for (let i = 0; i <= CONFIG.SUB_GRID_SIZE; i++) {
-        const lng = bounds.sw[1] + i * subLngStep;
-        if (lng < lngMin || lng > lngMax) continue;
-        const x = map.project([latCenter, lng], coords.z).x - coords.x * tileSize.x;
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, tileSize.y);
-        ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+
+      for (let parentLat = latStart; parentLat <= latMax + CONFIG.TILE_SIZE; parentLat += CONFIG.TILE_SIZE) {
+        for (let parentLng = lngStart; parentLng <= lngMax + CONFIG.LNG_STEP; parentLng += CONFIG.LNG_STEP) {
+          for (let i = 0; i <= CONFIG.SUB_GRID_SIZE; i++) {
+            const lat = parentLat + i * subLatStep;
+            if (lat < latMin - subLatStep || lat > latMax + subLatStep) continue;
+            const y = map.project([lat, parentLng + subLngStep / 2], coords.z).y - coords.y * tileSize.y;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(tileSize.x, y);
+            ctx.stroke();
+          }
+
+          for (let i = 0; i <= CONFIG.SUB_GRID_SIZE; i++) {
+            const lng = parentLng + i * subLngStep;
+            if (lng < lngMin - subLngStep || lng > lngMax + subLngStep) continue;
+            const x = map.project([parentLat + subLatStep / 2, lng], coords.z).x - coords.x * tileSize.x;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, tileSize.y);
+            ctx.stroke();
+          }
+        }
       }
 
       ctx.strokeStyle = 'rgba(255,255,255,0.2)';
       ctx.lineWidth = 2;
-      const corners = [
-        map.project([bounds.sw[0], bounds.sw[1]], coords.z),
-        map.project([bounds.ne[0], bounds.ne[1]], coords.z)
-      ];
-      const rx = corners[0].x - coords.x * tileSize.x;
-      const ry = corners[0].y - coords.y * tileSize.y;
-      const rw = corners[1].x - corners[0].x;
-      const rh = corners[1].y - corners[0].y;
-      ctx.strokeRect(rx, ry, rw, rh);
+
+      for (let parentLat = latStart; parentLat <= latMax + CONFIG.TILE_SIZE; parentLat += CONFIG.TILE_SIZE) {
+        for (let parentLng = lngStart; parentLng <= lngMax + CONFIG.LNG_STEP; parentLng += CONFIG.LNG_STEP) {
+          const sw = map.project([parentLat, parentLng], coords.z);
+          const ne = map.project([parentLat + parentLatSpan, parentLng + parentLngSpan], coords.z);
+          const rx = sw.x - coords.x * tileSize.x;
+          const ry = sw.y - coords.y * tileSize.y;
+          const rw = ne.x - sw.x;
+          const rh = ne.y - sw.y;
+          ctx.strokeRect(rx, ry, rw, rh);
+        }
+      }
 
       return tile;
     }
@@ -186,6 +214,23 @@ function updateSubGridVisibility() {
   } else {
     if (subGridLayer && map.hasLayer(subGridLayer)) {
       map.removeLayer(subGridLayer);
+    }
+  }
+}
+
+function updateChildrenVisibility() {
+  if (map.getZoom() >= CONFIG.SUB_GRID_ZOOM) {
+    for (const parentId of Object.keys(childrenCache)) {
+      if (pixelLayers[parentId] && !childLayers[parentId]) {
+        renderChildren(parentId, childrenCache[parentId]);
+      }
+    }
+  } else {
+    for (const parentId of Object.keys(childLayers)) {
+      if (childLayers[parentId]) {
+        for (const rect of childLayers[parentId]) map.removeLayer(rect);
+        delete childLayers[parentId];
+      }
     }
   }
 }
@@ -258,6 +303,16 @@ function handleMapClick(e) {
     const subBounds = subTileBounds(tile.key, sub.subX, sub.subY);
     renderChildPixel(tile.key, sub.key, subBounds, color);
 
+    const childData = { subX: sub.subX, subY: sub.subY, color };
+    if (!childrenCache[tile.key]) childrenCache[tile.key] = [];
+    const idx = childrenCache[tile.key].findIndex(c => c.subX === sub.subX && c.subY === sub.subY);
+    if (idx >= 0) {
+      childrenCache[tile.key][idx] = childData;
+    } else {
+      childrenCache[tile.key].push(childData);
+    }
+    updateParentDisplay(tile.key);
+
     writeChildPixel(tile.key, lat, lng, color).catch(err => {
       console.error('Failed to write child pixel:', err);
     });
@@ -291,6 +346,7 @@ function renderPixels(pixels) {
     if (!parentIds.has(id)) {
       map.removeLayer(pixelLayers[id]);
       delete pixelLayers[id];
+      delete childrenCache[id];
     }
   }
 
@@ -303,13 +359,15 @@ function renderPixels(pixels) {
 
   for (const pixel of pixels) {
     if (pixel.hasChildren && pixel.children) {
+      childrenCache[pixel.id] = pixel.children;
       renderParentWithChildren(pixel);
     } else {
       renderPixel(pixel);
-      if (childLayers[pixel.id] && !pixel.hasChildren) {
+      if (childLayers[pixel.id]) {
         for (const rect of childLayers[pixel.id]) map.removeLayer(rect);
         delete childLayers[pixel.id];
       }
+      delete childrenCache[pixel.id];
     }
   }
 }
@@ -319,7 +377,7 @@ function renderPixel(pixel) {
   const bounds = tileBounds(id);
 
   if (pixelLayers[id]) {
-    pixelLayers[id].setStyle({ fillColor: color, color: color });
+    pixelLayers[id].setStyle({ fillColor: color, color: color, fillOpacity: 0.75 });
   } else {
     const rect = L.rectangle([bounds.sw, bounds.ne], {
       color,
@@ -335,23 +393,34 @@ function renderPixel(pixel) {
 
 function renderParentWithChildren(pixel) {
   const bounds = tileBounds(pixel.id);
+  const display = computeParentDisplay(pixel.children);
 
-  if (!pixelLayers[pixel.id]) {
+  if (pixelLayers[pixel.id]) {
+    pixelLayers[pixel.id].setStyle({ fillColor: display.color, color: display.color, fillOpacity: display.opacity });
+  } else {
     const rect = L.rectangle([bounds.sw, bounds.ne], {
-      color: pixel.color,
-      fillColor: pixel.color,
-      fillOpacity: 0.75,
+      color: display.color,
+      fillColor: display.color,
+      fillOpacity: display.opacity,
       weight: 0,
       interactive: false
     });
     rect.addTo(map);
     pixelLayers[pixel.id] = rect;
-  } else {
-    pixelLayers[pixel.id].setStyle({ fillColor: pixel.color, color: pixel.color });
   }
 
   if (pixel.children && map.getZoom() >= CONFIG.SUB_GRID_ZOOM) {
     renderChildren(pixel.id, pixel.children);
+  }
+}
+
+function updateParentDisplay(parentId) {
+  const children = childrenCache[parentId];
+  if (!children || children.length === 0) return;
+
+  const display = computeParentDisplay(children);
+  if (pixelLayers[parentId]) {
+    pixelLayers[parentId].setStyle({ fillColor: display.color, color: display.color, fillOpacity: display.opacity });
   }
 }
 
@@ -408,6 +477,7 @@ function removePixel(id) {
     for (const rect of childLayers[id]) map.removeLayer(rect);
     delete childLayers[id];
   }
+  delete childrenCache[id];
 }
 
 function removeChildren(parentId) {
@@ -415,6 +485,7 @@ function removeChildren(parentId) {
     for (const rect of childLayers[parentId]) map.removeLayer(rect);
     delete childLayers[parentId];
   }
+  delete childrenCache[parentId];
 }
 
 function updateBoundaryVisualization() {

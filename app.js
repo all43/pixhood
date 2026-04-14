@@ -125,7 +125,7 @@ function handleLocationResult(result) {
 }
 
 function onWSPixel(data) {
-  if (data.hasChildren === false && childLayers[data.id]) {
+  if (data.hasChildren === false) {
     removeChildren(data.id);
   }
 
@@ -133,20 +133,28 @@ function onWSPixel(data) {
 }
 
 function onWSChild(data, msgType) {
-  if (msgType === 'clearChildren' || !data.childPixel) {
+  if (msgType === 'clearChildren') {
     if (data.parentId) removeChildren(data.parentId);
     return;
   }
+
+  if (!data.childPixel) return;
 
   const parentId = data.parentId;
   const child = data.childPixel;
   const subBounds = subTileBounds(parentId, child.subX, child.subY);
 
-    renderChildPixel(parentId, child.id || subTileKey(parentId, child.subX, child.subY), subBounds, child.color);
-
-  if (pixelLayers[parentId] && data.parentColor) {
-    pixelLayers[parentId].setStyle({ fillColor: data.parentColor, color: data.parentColor });
+  const childData = { subX: child.subX, subY: child.subY, color: child.color };
+  if (!childrenCache[parentId]) childrenCache[parentId] = [];
+  const idx = childrenCache[parentId].findIndex(c => c.subX === child.subX && c.subY === child.subY);
+  if (idx >= 0) {
+    childrenCache[parentId][idx] = childData;
+  } else {
+    childrenCache[parentId].push(childData);
   }
+
+  renderChildPixel(parentId, child.id || subTileKey(parentId, child.subX, child.subY), subBounds, child.color);
+  updateParentDisplay(parentId);
 }
 
 async function refreshViewport() {

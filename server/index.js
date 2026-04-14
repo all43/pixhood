@@ -30,20 +30,6 @@ function readBody(req) {
   });
 }
 
-function averageColor(children) {
-  if (children.length === 0) return null;
-  let r = 0, g = 0, b = 0;
-  for (const c of children) {
-    const hex = c.color;
-    r += parseInt(hex.slice(1, 3), 16);
-    g += parseInt(hex.slice(3, 5), 16);
-    b += parseInt(hex.slice(5, 7), 16);
-  }
-  const n = children.length;
-  const toHex = v => Math.round(v / n).toString(16).padStart(2, '0');
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-}
-
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost`);
 
@@ -61,7 +47,6 @@ async function handleRequest(req, res) {
       const s = parseFloat(url.searchParams.get('s'));
       const e = parseFloat(url.searchParams.get('e'));
       const w = parseFloat(url.searchParams.get('w'));
-      const zoom = parseInt(url.searchParams.get('zoom')) || 0;
 
       if (isNaN(n) || isNaN(s) || isNaN(e) || isNaN(w)) {
         res.writeHead(400);
@@ -75,36 +60,12 @@ async function handleRequest(req, res) {
         redis.cleanupGeoIndex(staleKeys).catch(err => console.error('Geo cleanup error:', err));
       }
 
-      const result = [];
-      const parentIds = [];
+      const subPromises = pixels.map(async pixel => {
+        const children = await redis.getSubpixels(pixel.id);
+        return { ...pixel, hasChildren: children.length > 0, children: children.length > 0 ? children : undefined };
+      });
 
-      for (const pixel of pixels) {
-        if (zoom >= 19) {
-          parentIds.push(pixel.id);
-        }
-        result.push({ ...pixel, hasChildren: false });
-      }
-
-      if (parentIds.length > 0) {
-        const subPromises = parentIds.map(async id => {
-          const children = await redis.getSubpixels(id);
-          return { id, children };
-        });
-        const subResults = await Promise.all(subPromises);
-        const subMap = {};
-        for (const { id, children } of subResults) {
-          if (children.length > 0) {
-            subMap[id] = children;
-          }
-        }
-        for (const item of result) {
-          if (subMap[item.id]) {
-            item.hasChildren = true;
-            item.children = subMap[item.id];
-            item.color = averageColor(subMap[item.id]);
-          }
-        }
-      }
+      const result = await Promise.all(subPromises);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
@@ -143,12 +104,10 @@ async function handleRequest(req, res) {
 
       const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
 
-      const avgColor = averageColor(children);
-
-      broadcast({ type: 'child', data: { parentId, childKey, childPixel, parentColor: avgColor, childrenCount: children.length } });
+      broadcast({ type: 'child', data: { parentId, childKey, childPixel, childrenCount: children.length } });
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, parentColor: avgColor }));
+      res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       console.error('POST /pixels/child error:', err);
       res.writeHead(400);
