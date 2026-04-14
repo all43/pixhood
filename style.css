@@ -148,7 +148,7 @@ html, body {
   position: absolute;
   right: 12px;
   bottom: 120px;
-  z-index: 800;
+  z-index: 1001;
   width: 36px;
   height: 36px;
   background: #1a1a2e;

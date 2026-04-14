@@ -262,8 +262,11 @@ function createLocateButton() {
   btn.id = 'locate-btn';
   btn.title = 'Locate me';
   btn.innerHTML = '<div class="locate-icon"><div class="locate-icon-dot"></div></div>';
-  btn.addEventListener('click', handleLocate);
-  document.getElementById('map').appendChild(btn);
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    handleLocate();
+  });
+  document.getElementById('app').appendChild(btn);
 }
 
 async function handleLocate() {
