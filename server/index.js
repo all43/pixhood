@@ -7,8 +7,6 @@ const redis = require('./redis');
 const PORT = process.env.PORT || 3000;
 const STATIC_DIR = path.join(__dirname, '..');
 
-// Set via CORS_ORIGIN env var on Fly (e.g. https://pixhood.pages.dev).
-// Defaults to localhost for local dev.
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
 
 function setCORS(res) {
@@ -23,12 +21,32 @@ const MIME = {
   '.js':   'application/javascript',
 };
 
-// ── HTTP request handler ──────────────────────────────────────────────────────
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+function averageColor(children) {
+  if (children.length === 0) return null;
+  let r = 0, g = 0, b = 0;
+  for (const c of children) {
+    const hex = c.color;
+    r += parseInt(hex.slice(1, 3), 16);
+    g += parseInt(hex.slice(3, 5), 16);
+    b += parseInt(hex.slice(5, 7), 16);
+  }
+  const n = children.length;
+  const toHex = v => Math.round(v / n).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost`);
 
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     setCORS(res);
     res.writeHead(204);
@@ -36,13 +54,60 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // API: GET /pixels — return all stored pixels
   if (req.method === 'GET' && url.pathname === '/pixels') {
     setCORS(res);
     try {
-      const pixels = await redis.getAllPixels();
+      const n = parseFloat(url.searchParams.get('n'));
+      const s = parseFloat(url.searchParams.get('s'));
+      const e = parseFloat(url.searchParams.get('e'));
+      const w = parseFloat(url.searchParams.get('w'));
+      const zoom = parseInt(url.searchParams.get('zoom')) || 0;
+
+      if (isNaN(n) || isNaN(s) || isNaN(e) || isNaN(w)) {
+        res.writeHead(400);
+        res.end('Missing bounds params: n, s, e, w');
+        return;
+      }
+
+      const { pixels, staleKeys } = await redis.getPixelsInViewport(n, s, e, w);
+
+      if (staleKeys.length > 0) {
+        redis.cleanupGeoIndex(staleKeys).catch(err => console.error('Geo cleanup error:', err));
+      }
+
+      const result = [];
+      const parentIds = [];
+
+      for (const pixel of pixels) {
+        if (zoom >= 19) {
+          parentIds.push(pixel.id);
+        }
+        result.push({ ...pixel, hasChildren: false });
+      }
+
+      if (parentIds.length > 0) {
+        const subPromises = parentIds.map(async id => {
+          const children = await redis.getSubpixels(id);
+          return { id, children };
+        });
+        const subResults = await Promise.all(subPromises);
+        const subMap = {};
+        for (const { id, children } of subResults) {
+          if (children.length > 0) {
+            subMap[id] = children;
+          }
+        }
+        for (const item of result) {
+          if (subMap[item.id]) {
+            item.hasChildren = true;
+            item.children = subMap[item.id];
+            item.color = averageColor(subMap[item.id]);
+          }
+        }
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(pixels));
+      res.end(JSON.stringify(result));
     } catch (err) {
       console.error('GET /pixels error:', err);
       res.writeHead(500);
@@ -51,32 +116,50 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // API: POST /pixels — save a pixel and broadcast to all WS clients
   if (req.method === 'POST' && url.pathname === '/pixels') {
     setCORS(res);
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      try {
-        const pixel = JSON.parse(body);
-        await redis.savePixel(pixel);
-        broadcast({ type: 'pixel', data: pixel });
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (err) {
-        console.error('POST /pixels error:', err);
-        res.writeHead(400);
-        res.end('Bad request');
-      }
-    });
+    try {
+      const body = await readBody(req);
+      const pixel = JSON.parse(body);
+      await redis.deleteSubpixels(pixel.id);
+      await redis.savePixel(pixel);
+      broadcast({ type: 'clearChildren', data: { parentId: pixel.id } });
+      broadcast({ type: 'pixel', data: { ...pixel, hasChildren: false } });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      console.error('POST /pixels error:', err);
+      res.writeHead(400);
+      res.end('Bad request');
+    }
     return;
   }
 
-  // Static file serving
+  if (req.method === 'POST' && url.pathname === '/pixels/child') {
+    setCORS(res);
+    try {
+      const body = await readBody(req);
+      const { parentId, childKey, childPixel } = JSON.parse(body);
+
+      const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
+
+      const avgColor = averageColor(children);
+
+      broadcast({ type: 'child', data: { parentId, childKey, childPixel, parentColor: avgColor, childrenCount: children.length } });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, parentColor: avgColor }));
+    } catch (err) {
+      console.error('POST /pixels/child error:', err);
+      res.writeHead(400);
+      res.end('Bad request');
+    }
+    return;
+  }
+
   let filePath = url.pathname === '/' ? '/index.html' : url.pathname;
   filePath = path.join(STATIC_DIR, filePath);
 
-  // Prevent path traversal outside STATIC_DIR
   if (!filePath.startsWith(STATIC_DIR)) {
     res.writeHead(403);
     res.end('Forbidden');
@@ -95,26 +178,43 @@ async function handleRequest(req, res) {
   });
 }
 
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-
 const server = http.createServer(handleRequest);
 const wss = new WebSocketServer({ server });
 
 function broadcast(data) {
   const msg = JSON.stringify(data);
   for (const client of wss.clients) {
-    if (client.readyState === 1 /* OPEN */) {
+    if (client.readyState === 1) {
       client.send(msg);
     }
   }
 }
 
-wss.on('connection', ws => {
-  // Prototype: clients only receive, they don't send over WS
-  ws.on('error', err => console.error('WS client error:', err));
-});
+function getConnectedCount() {
+  let count = 0;
+  for (const client of wss.clients) {
+    if (client.readyState === 1) count++;
+  }
+  return count;
+}
 
-// ── Start ─────────────────────────────────────────────────────────────────────
+wss.on('connection', ws => {
+  console.log(`WS client connected (${getConnectedCount()} total)`);
+
+  ws.on('message', raw => {
+    try {
+      const msg = JSON.parse(raw);
+      if (msg.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+      }
+    } catch {}
+  });
+
+  ws.on('error', err => console.error('WS client error:', err));
+  ws.on('close', () => {
+    console.log(`WS client disconnected (${getConnectedCount()} total)`);
+  });
+});
 
 redis.connect().then(() => {
   server.listen(PORT, () => {

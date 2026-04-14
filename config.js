@@ -1,6 +1,3 @@
-// In production the frontend (Cloudflare Pages) and backend (Fly.io) are on
-// different origins. Detect by hostname and point to the Fly.io app.
-// After `fly launch`, replace 'pixhood' below with your actual app name.
 const _local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const _backendHost = _local ? 'http://localhost:3000' : 'https://pixhood.fly.dev';
 
@@ -16,6 +13,11 @@ const CONFIG = {
 
   GRID_COLOR: 'rgba(255,255,255,0.08)',
   GRID_ZOOM_THRESHOLD: 16,
+
+  SUB_GRID_SIZE: 16,
+  SUB_GRID_ZOOM: 19,
+  VIEWPORT_MARGIN: 1.0,
+  HEARTBEAT_INTERVAL: 30000,
 
   PALETTE: [
     '#FFFFFF', '#000000', '#FF0000', '#00FF00',

@@ -1,5 +1,6 @@
 let selectedColor = '#FF0000';
 let slowHintTimer = null;
+let _refreshTimer = null;
 
 function getSelectedColor() {
   return selectedColor;
@@ -123,6 +124,54 @@ function handleLocationResult(result) {
   return { lat, lng };
 }
 
+function onWSPixel(data) {
+  if (data.hasChildren === false && childLayers[data.id]) {
+    removeChildren(data.id);
+  }
+
+  renderPixel(data);
+}
+
+function onWSChild(data, msgType) {
+  if (msgType === 'clearChildren' || !data.childPixel) {
+    if (data.parentId) removeChildren(data.parentId);
+    return;
+  }
+
+  const parentId = data.parentId;
+  const child = data.childPixel;
+  const subBounds = subTileBounds(parentId, child.subX, child.subY);
+
+    renderChildPixel(parentId, child.id || subTileKey(parentId, child.subX, child.subY), subBounds, child.color);
+
+  if (pixelLayers[parentId] && data.parentColor) {
+    pixelLayers[parentId].setStyle({ fillColor: data.parentColor, color: data.parentColor });
+  }
+}
+
+async function refreshViewport() {
+  const vb = getViewportBounds();
+  const zoom = getCurrentZoom();
+
+  if (!needsRefetch(vb)) {
+    updateBoundaryVisualization();
+    return;
+  }
+
+  try {
+    const pixels = await loadViewport(vb, zoom);
+    renderPixels(pixels);
+    updateBoundaryVisualization();
+  } catch (err) {
+    console.error('Viewport refresh failed:', err);
+  }
+}
+
+function scheduleViewportRefresh() {
+  if (_refreshTimer) clearTimeout(_refreshTimer);
+  _refreshTimer = setTimeout(refreshViewport, 300);
+}
+
 async function proceedToMap(geoResult, pixelsPromise) {
   const lat = geoResult.lat || CONFIG.DEFAULT_LAT;
   const lng = geoResult.lng || CONFIG.DEFAULT_LNG;
@@ -134,13 +183,22 @@ async function proceedToMap(geoResult, pixelsPromise) {
 
   try {
     const pixels = await pixelsPromise;
-    pixels.forEach(renderPixel);
+    renderPixels(pixels);
+    updateBoundaryVisualization();
   } catch (err) {
     console.error('Failed to load pixels:', err);
     showToast('Could not load pixels — check server');
   }
 
-  connectWebSocket(renderPixel);
+  connectWebSocket(onWSPixel, onWSChild);
+
+  map.on('moveend', () => {
+    scheduleViewportRefresh();
+  });
+  map.on('zoomend', () => {
+    scheduleViewportRefresh();
+  });
+
   hideOverlay();
 }
 
@@ -148,34 +206,46 @@ async function init() {
   initColorPicker();
   document.querySelector('.banner-close').addEventListener('click', hideLocationBanner);
 
-  const pixelsPromise = loadAllPixels().catch(err => {
-    console.error('Failed to load pixels:', err);
-    return [];
-  });
+  const geoPromise = (async () => {
+    const vb = { n: CONFIG.DEFAULT_LAT + 0.01, s: CONFIG.DEFAULT_LAT - 0.01, e: CONFIG.DEFAULT_LNG + 0.01, w: CONFIG.DEFAULT_LNG - 0.01 };
+    return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
+  })();
 
   const pref = localStorage.getItem('geo_pref');
+
+  const makeInitialPromise = (lat, lng) => {
+    const vb = {
+      n: lat + 0.01,
+      s: lat - 0.01,
+      e: lng + 0.01,
+      w: lng - 0.01
+    };
+    return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
+  };
 
   if (pref === 'granted') {
     showSpinnerScreen('Waiting for location\u2026');
     const result = await getGeolocation(10000);
     if (result.status === 'granted') {
-      await proceedToMap(result, pixelsPromise);
+      const lat = result.lat || CONFIG.DEFAULT_LAT;
+      const lng = result.lng || CONFIG.DEFAULT_LNG;
+      await proceedToMap(result, makeInitialPromise(lat, lng));
     } else if (result.status === 'denied') {
       localStorage.setItem('geo_pref', 'denied');
-      await proceedToMap({ status: 'denied' }, pixelsPromise);
+      await proceedToMap({ status: 'denied' }, geoPromise);
     } else {
-      await proceedToMap({ status: 'timeout' }, pixelsPromise);
+      await proceedToMap({ status: 'timeout' }, geoPromise);
     }
     return;
   }
 
   if (pref === 'skipped') {
-    await proceedToMap({ status: 'skipped' }, pixelsPromise);
+    await proceedToMap({ status: 'skipped' }, geoPromise);
     return;
   }
 
   if (pref === 'denied') {
-    await proceedToMap({ status: 'denied' }, pixelsPromise);
+    await proceedToMap({ status: 'denied' }, geoPromise);
     return;
   }
 
@@ -183,18 +253,20 @@ async function init() {
     showSpinnerScreen('Waiting for location\u2026');
     const result = await getGeolocation(60000);
     if (result.status === 'granted') {
-      await proceedToMap(result, pixelsPromise);
+      const lat = result.lat || CONFIG.DEFAULT_LAT;
+      const lng = result.lng || CONFIG.DEFAULT_LNG;
+      await proceedToMap(result, makeInitialPromise(lat, lng));
     } else if (result.status === 'denied') {
       localStorage.setItem('geo_pref', 'denied');
-      await proceedToMap({ status: 'denied' }, pixelsPromise);
+      await proceedToMap({ status: 'denied' }, geoPromise);
     } else {
-      await proceedToMap({ status: 'timeout' }, pixelsPromise);
+      await proceedToMap({ status: 'timeout' }, geoPromise);
     }
   });
 
   document.getElementById('btn-skip-geo').addEventListener('click', async () => {
     localStorage.setItem('geo_pref', 'skipped');
-    await proceedToMap({ status: 'skipped' }, pixelsPromise);
+    await proceedToMap({ status: 'skipped' }, geoPromise);
   });
 }
 
