@@ -4,6 +4,8 @@ Paint colored pixels on a real map. Your neighborhood, in pixels.
 
 > Think r/place meets Google Maps — geo-anchored, collaborative, no accounts needed.
 
+Live at [pixhood.art](https://pixhood.art)
+
 ---
 
 ## What it does
@@ -14,6 +16,8 @@ Paint colored pixels on a real map. Your neighborhood, in pixels.
 - Pixels are tied to real-world coordinates on a Mercator-corrected square grid (~10×10m)
 - Everyone sees each other's pixels in real time via WebSocket
 - Dark basemap (CartoDB Dark Matter) with subtle grid overlay visible at zoom 16+
+- Zoom in past zoom 21 → each pixel reveals a 16×16 sub-grid for detailed art
+- All pixels expire after 24h — canvas resets daily, no moderation needed
 
 ---
 
@@ -21,7 +25,7 @@ Paint colored pixels on a real map. Your neighborhood, in pixels.
 
 - **Frontend** — Vanilla JS, Leaflet.js, native WebSocket
 - **Backend** — Node.js, [`ws`](https://github.com/websockets/ws)
-- **Storage** — Redis (Hash: `tileKey → pixel JSON`)
+- **Storage** — Redis (individual keys with TTL, geo sorted set for viewport queries)
 - **Basemap** — CartoDB Dark Matter (nolabels)
 - No framework, no build step
 
@@ -51,6 +55,7 @@ REDIS_URL=redis://localhost:6379 npm run dev
 |----------|---------|-------------|
 | `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
 | `PORT` | `3000` | HTTP server port |
+| `CORS_ORIGIN` | `http://localhost:{PORT}` | Allowed CORS origin |
 
 ---
 
@@ -67,6 +72,10 @@ TILE_SIZE = 0.0001                          (~11.1m in latitude)
 LNG_STEP  = 0.0001 / cos(52.52°)           (~11.1m in longitude at Berlin)
 ```
 
+### Sub-grid (zoom ≥ 21)
+
+Each tile can contain a 16×16 sub-grid of child pixels. Painting a parent erases its children. Painting a child updates the parent's displayed color (averaged from children, with opacity based on fill ratio).
+
 ### Tile keys
 
 ```js
@@ -77,12 +86,23 @@ Each tile holds exactly one color — last painter wins.
 
 ### Data flow
 
-1. Page load → `loadAllPixels()` fetches all pixels from `GET /pixels`
+1. Page load → `loadViewport()` fetches pixels in the current bounding box from `GET /pixels`
 2. User picks color, clicks map → `writePixel()` sends `POST /pixels`
-3. Server saves to Redis and broadcasts to all WebSocket clients
+3. Server saves to Redis (24h TTL) and broadcasts to all WebSocket clients
 4. Connected clients render the new pixel immediately
+5. Client sends heartbeat pings every 30s to keep the connection alive
 
 Sessions are anonymous — a UUID is generated and stored in `localStorage`. No sign-up, no accounts.
+
+### Redis keys
+
+| Key pattern | Type | TTL | Purpose |
+|-------------|------|-----|---------|
+| `pixel:<tileKey>` | String | 24h | Parent pixel JSON |
+| `subpixels:<tileKey>` | Hash | 24h | Child pixels: field=`subX_subY`, value=JSON |
+| `pixels:geo` | Sorted Set | — | GEOADD/GEOSEARCH for viewport queries |
+
+Stale geo entries (pixel key expired) cleaned lazily on each viewport query.
 
 ---
 
@@ -91,18 +111,18 @@ Sessions are anonymous — a UUID is generated and stored in `localStorage`. No 
 ```
 pixhood/
 ├── server/
-│   ├── index.js      # HTTP server, WebSocket broadcast, static files, CORS
-│   ├── redis.js      # Redis client: savePixel (HSET), getAllPixels (HGETALL)
+│   ├── index.js      # HTTP server, WebSocket broadcast, viewport + child APIs
+│   ├── redis.js      # Redis client: geo-indexed queries, TTL management
 │   ├── fly.toml      # Fly.io: 256MB VM, auto-stop, fra region
 │   ├── Dockerfile
 │   └── package.json  # redis, ws dependencies
 ├── index.html        # Welcome screen, loading spinner, location banner, toast
 ├── style.css         # All styles: topbar, palette, map, pin, welcome, mobile
 ├── config.js         # TILE_SIZE, LNG_STEP, palette, API/WS URLs
-├── grid.js           # tileKey(), snapToTile(), tileBounds()
-├── pixels.js         # fetch + WebSocket client, session identity
-├── map.js            # Leaflet map, grid overlay, pixel rendering, locate button
-└── app.js            # Init flow, geolocation (3-state preference), color picker
+├── grid.js           # tileKey(), snapToTile(), snapToSubTile(), subTileBounds()
+├── pixels.js         # Viewport fetch, child pixel write, WebSocket + heartbeat
+├── map.js            # Leaflet map, grid/sub-grid overlays, pixel rendering, locate button
+└── app.js            # Init flow, geolocation, color picker, viewport refresh wiring
 ```
 
 Script load order in `index.html` matters: `config → grid → pixels → map → app`.
@@ -111,7 +131,7 @@ Script load order in `index.html` matters: `config → grid → pixels → map �
 
 ## Deploying
 
-Frontend on **Cloudflare Pages**, backend on **Fly.io** with managed Upstash Redis.
+Frontend on **Cloudflare Pages** ([pixhood.art](https://pixhood.art)), backend on **Fly.io** ([api.pixhood.art](https://api.pixhood.art)) with managed Redis.
 
 ### Prerequisites
 
@@ -123,15 +143,21 @@ Frontend on **Cloudflare Pages**, backend on **Fly.io** with managed Upstash Red
 ```bash
 cd server
 fly launch --name pixhood --region fra --no-deploy --yes
-# ↳ auto-provisions Upstash Redis and sets REDIS_URL
-
-fly secrets set CORS_ORIGIN=https://pixhood.pages.dev
+fly secrets set CORS_ORIGIN=https://pixhood.art
 fly deploy
 ```
 
-Backend is now live at `https://pixhood.fly.dev`.
+### Custom domain for backend
 
-> If Fly picked a different app name, update the two `pixhood.fly.dev` references in `config.js`.
+```bash
+fly certs add api.pixhood.art
+```
+
+Then add DNS records in Cloudflare:
+| Type | Name | Value |
+|------|------|-------|
+| A | `api` | (from `fly certs add` output) |
+| AAAA | `api` | (from `fly certs add` output) |
 
 ### 2. Frontend (Cloudflare Pages)
 
@@ -141,7 +167,7 @@ wrangler pages project create pixhood --production-branch main
 wrangler pages deploy . --project-name pixhood --branch main
 ```
 
-Frontend is now live at `https://pixhood.pages.dev`.
+Then add custom domain `pixhood.art` in Cloudflare Pages dashboard.
 
 ### Re-deploying
 
@@ -150,25 +176,23 @@ Frontend is now live at `https://pixhood.pages.dev`.
 fly deploy --remote-only
 
 # Frontend (from repo root)
-npx wrangler pages deploy . --project-name=pixhood --branch=main
+wrangler pages deploy . --project-name pixhood --commit-dirty=true
 ```
 
 ### Environment variables
 
 | Where | Variable | Description |
 |-------|----------|-------------|
-| Fly.io | `REDIS_URL` | Set automatically by `fly launch` |
-| Fly.io | `CORS_ORIGIN` | Cloudflare Pages URL (e.g. `https://pixhood.pages.dev`) |
+| Fly.io | `REDIS_URL` | Redis connection URL |
+| Fly.io | `CORS_ORIGIN` | `https://pixhood.art` |
 | Fly.io | `PORT` | Defaults to `3000` |
 
 ---
 
 ## Known limitations
 
-- **All pixels are fetched globally** — `GET /pixels` returns every pixel in Redis regardless of viewport. Needs viewport-based filtering (`bbox`) to scale.
-- **No pixel expiry** — pixels persist indefinitely. Planned: switch to `SET` with TTL for daily-reset canvas.
-- **No rate limiting** — a single client can spam paints.
 - **Berlin-optimized grid** — `LNG_STEP` is calibrated for Berlin's latitude. Tiles will be slightly non-square at other latitudes.
+- **No rate limiting** — a single client can spam paints.
 
 ---
 

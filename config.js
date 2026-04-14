@@ -1,9 +1,9 @@
 const _local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-const _backendHost = _local ? 'http://localhost:3000' : 'https://pixhood.fly.dev';
+const _backendHost = _local ? 'http://localhost:3000' : 'https://api.pixhood.art';
 
 const CONFIG = {
   API_URL: _backendHost,
-  WS_URL: _local ? 'ws://localhost:3000' : 'wss://pixhood.fly.dev',
+  WS_URL: _local ? 'ws://localhost:3000' : 'wss://api.pixhood.art',
 
   TILE_SIZE: 0.0001,
   LNG_STEP: 0.0001 / Math.cos(52.5200 * Math.PI / 180),
