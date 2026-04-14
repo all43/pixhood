@@ -79,17 +79,26 @@ async function getGeolocation(timeout) {
 
   try {
     const result = await navigator.permissions.query({ name: 'geolocation' });
+    console.info('[geo] permission state:', result.state);
     if (result.state === 'denied') {
       return { status: 'denied' };
+    }
+    if (result.state === 'prompt') {
+      return { status: 'prompt' };
     }
   } catch {
   }
 
+  const t0 = Date.now();
   return new Promise(resolve => {
     navigator.geolocation.getCurrentPosition(
-      pos => resolve({ status: 'granted', lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      pos => {
+        console.info('[geo] acquired in', Date.now() - t0, 'ms');
+        resolve({ status: 'granted', lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
       err => {
         const map = { 1: 'denied', 2: 'unavailable', 3: 'timeout' };
+        console.warn('[geo] failed after', Date.now() - t0, 'ms —', err.code, err.message);
         resolve({ status: map[err.code] || 'error' });
       },
       { timeout: timeout || 60000, enableHighAccuracy: false }
@@ -116,6 +125,10 @@ function handleLocationResult(result) {
     case 'unavailable':
       showToast('Location unavailable — showing Berlin');
       localStorage.setItem('geo_pref', 'skipped');
+      break;
+    case 'timeout':
+      showLocationBanner('Location timed out — tap the locate button to retry.');
+      localStorage.removeItem('geo_pref');
       break;
     default:
       showToast('Location error — showing Berlin');
@@ -232,19 +245,31 @@ async function init() {
   };
 
   if (pref === 'granted') {
-    showSpinnerScreen('Waiting for location\u2026');
-    const result = await getGeolocation(10000);
-    if (result.status === 'granted') {
-      const lat = result.lat || CONFIG.DEFAULT_LAT;
-      const lng = result.lng || CONFIG.DEFAULT_LNG;
-      await proceedToMap(result, makeInitialPromise(lat, lng));
-    } else if (result.status === 'denied') {
-      localStorage.setItem('geo_pref', 'denied');
-      await proceedToMap({ status: 'denied' }, geoPromise);
-    } else {
-      await proceedToMap({ status: 'timeout' }, geoPromise);
+    let permState = 'granted';
+    try {
+      const result = await navigator.permissions.query({ name: 'geolocation' });
+      permState = result.state;
+    } catch {
     }
-    return;
+
+    if (permState === 'prompt') {
+      localStorage.removeItem('geo_pref');
+    } else {
+      showSpinnerScreen('Waiting for location\u2026');
+      const result = await getGeolocation(10000);
+      if (result.status === 'granted') {
+        const lat = result.lat || CONFIG.DEFAULT_LAT;
+        const lng = result.lng || CONFIG.DEFAULT_LNG;
+        await proceedToMap(result, makeInitialPromise(lat, lng));
+      } else if (result.status === 'denied') {
+        localStorage.setItem('geo_pref', 'denied');
+        await proceedToMap({ status: 'denied' }, geoPromise);
+      } else {
+        localStorage.removeItem('geo_pref');
+        await proceedToMap({ status: 'timeout' }, geoPromise);
+      }
+      return;
+    }
   }
 
   if (pref === 'skipped') {
@@ -267,7 +292,10 @@ async function init() {
     } else if (result.status === 'denied') {
       localStorage.setItem('geo_pref', 'denied');
       await proceedToMap({ status: 'denied' }, geoPromise);
+    } else if (result.status === 'prompt') {
+      proceedToMap({ status: 'skipped' }, geoPromise);
     } else {
+      localStorage.removeItem('geo_pref');
       await proceedToMap({ status: 'timeout' }, geoPromise);
     }
   });

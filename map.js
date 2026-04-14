@@ -287,7 +287,10 @@ async function handleLocate() {
     showLocationBanner('Location blocked — check browser settings to paint where you are.');
     showToast('Location blocked — check browser settings');
   } else if (result.status === 'timeout') {
+    localStorage.removeItem('geo_pref');
     showToast('Location timed out — try again');
+  } else if (result.status === 'prompt') {
+    showToast('Location permission required — try again');
   } else if (result.status === 'unavailable') {
     localStorage.setItem('geo_pref', 'skipped');
     showToast('Location unavailable on this device');
@@ -297,6 +300,8 @@ async function handleLocate() {
 }
 
 function handleMapClick(e) {
+  if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
+
   const { lat, lng } = e.latlng;
   const color = getSelectedColor();
 
