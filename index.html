@@ -15,6 +15,28 @@
     </div>
     <div id="map"></div>
   </div>
+  <div id="loading">
+    <div id="welcome">
+      <div id="welcome-title">PIXHOOD</div>
+      <div id="welcome-text">
+        Paint pixels on a map of your city.<br>
+        Allow location access to start painting where you are.
+      </div>
+      <div id="welcome-buttons">
+        <button id="btn-enable-geo">Enable location</button>
+        <button id="btn-skip-geo">Continue without</button>
+      </div>
+    </div>
+    <div id="loading-spinner-screen" class="hidden">
+      <div id="loading-spinner"></div>
+      <div id="loading-text"></div>
+      <div id="loading-slow-hint"></div>
+    </div>
+  </div>
+  <div id="location-banner">
+    <span class="banner-text"></span>
+    <button class="banner-close">&times;</button>
+  </div>
   <div id="toast"></div>
 
   <!-- Leaflet (only external dependency) -->
