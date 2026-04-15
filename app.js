@@ -101,7 +101,7 @@ async function getGeolocation(timeout) {
         console.warn('[geo] failed after', Date.now() - t0, 'ms —', err.code, err.message);
         resolve({ status: map[err.code] || 'error' });
       },
-      { timeout: timeout || 60000, enableHighAccuracy: false }
+      { timeout: timeout || 60000, enableHighAccuracy: false, maximumAge: 300000 }
     );
   });
 }
