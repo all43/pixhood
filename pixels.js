@@ -114,6 +114,12 @@ function sendViewport(viewportBounds) {
   _ws.send(JSON.stringify({ type: 'viewport', bounds: fb }));
 }
 
+let _onViewportReady = null;
+
+function setViewportReadyCallback(cb) {
+  _onViewportReady = cb;
+}
+
 function _openWS() {
   _ws = new WebSocket(CONFIG.WS_URL);
 
@@ -123,6 +129,12 @@ function _openWS() {
     _startHeartbeat();
     if (_loadedBounds) {
       _ws.send(JSON.stringify({ type: 'viewport', bounds: _loadedBounds }));
+    } else if (_onViewportReady) {
+      const bounds = _onViewportReady();
+      if (bounds) {
+        const fb = computeFetchBounds(bounds);
+        _ws.send(JSON.stringify({ type: 'viewport', bounds: fb }));
+      }
     }
   });
 

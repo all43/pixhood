@@ -210,6 +210,8 @@ async function proceedToMap(geoResult, pixelsPromise) {
     showToast('Could not load pixels — check server');
   }
 
+  setViewportReadyCallback(() => getViewportBounds());
+
   connectWebSocket(onWSPixel, onWSChild);
 
   const vb = getViewportBounds();

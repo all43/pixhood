@@ -140,15 +140,6 @@ async function handleRequest(req, res) {
 const server = http.createServer(handleRequest);
 const wss = new WebSocketServer({ server });
 
-function broadcast(data) {
-  const msg = JSON.stringify(data);
-  for (const client of wss.clients) {
-    if (client.readyState === 1) {
-      client.send(msg);
-    }
-  }
-}
-
 function inBounds(lat, lng, b) {
   return lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e;
 }
