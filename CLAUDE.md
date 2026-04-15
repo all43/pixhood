@@ -2,15 +2,19 @@
 
 Geo-anchored pixel art web app. Users paint colored pixels tied to real-world coordinates. Think r/place meets Google Maps — local-first, collaborative, launched initially in Berlin.
 
+Live at [pixhood.art](https://pixhood.art). Backend at [api.pixhood.art](https://api.pixhood.art).
+
 ## Architecture
 
-**Frontend**: Vanilla JS, no framework, no build step. Leaflet.js (CDN) for the map. Native browser `WebSocket` + `fetch` for backend communication.
+**Frontend**: Vanilla JS, no framework, no build step. Leaflet.js (CDN) for the map. Native browser `WebSocket` + `fetch` for backend communication. Hosted on Cloudflare Pages.
 
-**Backend**: Node.js HTTP server (`server/index.js`) with native WebSocket via `ws` package. Serves static files and the REST API.
+**Backend**: Node.js HTTP server (`server/index.js`) with native WebSocket via `ws` package. Hosted on Fly.io.
 
 **Storage**: Redis — pixels as individual String keys with 24h TTL, sub-pixels as Hashes per parent tile, geo sorted set for viewport queries.
 
-**Real-time**: Server broadcasts every pixel/child write to all connected WebSocket clients. Client sends heartbeat pings every 30s.
+**Real-time**: Viewport-scoped WebSocket broadcasts. Clients subscribe with their current viewport bounds; server only forwards pixel updates to clients whose viewport contains the painted tile. Client sends heartbeat pings every 30s.
+
+**Deployment**: Single Fly.io machine (required for in-memory WS state; cross-machine pub/sub not implemented). Frontend on Cloudflare Pages.
 
 ## Running locally
 
@@ -55,12 +59,21 @@ tileKey = `${Math.floor(lat / TILE_SIZE)}_${Math.floor(lng / LNG_STEP)}`
 
 `TILE_SIZE = 0.0001` degrees (~10m). `LNG_STEP` is cos-corrected for latitude. One pixel per tile, last painter wins.
 
-### Sub-grid (zoom ≥ 19)
+### Zoom levels
+
+| Zoom | Behavior |
+|------|----------|
+| < 16 | Grid hidden, painting disabled |
+| 16–20 | Parent pixel grid visible, click to paint parent pixels |
+| ≥ 21 | Sub-grid visible (16×16 per parent), click to paint child pixels |
+
+### Sub-grid (zoom ≥ 21)
 
 Each tile can contain a 16×16 sub-grid of child pixels. Sub-tile keys: `${parentKey}_${subX}_${subY}`.
 
 - Painting a **parent** erases all its children.
-- Painting a **child** updates parent color to the average of all children colors. Parent's own color is ignored when children exist.
+- Painting a **child** adds it to the parent's children hash. Parent's displayed color is the average of all children RGB values, with opacity = `sqrt(childrenCount / 256)`.
+- Parent's own color is ignored when children exist.
 - Children inherit the parent's 24h TTL; the whole set expires together.
 
 ## Data model
@@ -105,25 +118,44 @@ No user accounts — sessions are anonymous UUIDs in `localStorage`.
 
 Stale geo entries (pixel key expired) cleaned lazily on each viewport query.
 
+Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` — but does NOT reset the parent key TTL. Writing a parent or child pixel resets both parent and subpixels TTL to 24h.
+
 ## API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/pixels?n=&s=&e=&w=&zoom=` | Viewport query: pixels in bounding box. At zoom ≥ 19 includes children. |
+| `GET` | `/pixels?n=&s=&e=&w=` | Viewport query: pixels in bounding box. Always includes children. |
 | `POST` | `/pixels` | Save parent pixel, erase children, broadcast |
-| `POST` | `/pixels/child` | Save child pixel, update parent color, broadcast |
+| `POST` | `/pixels/child` | Save child pixel, broadcast |
 | `GET` | `/*` | Serve static files from project root |
 
-WebSocket: `ws://localhost:3000`
-- Server pushes: `{ type: "pixel" }`, `{ type: "child" }`, `{ type: "clearChildren" }`
+WebSocket: `wss://api.pixhood.art`
+- Server pushes: `{ type: "pixel" }`, `{ type: "child" }`, `{ type: "clearChildren" }` (only to clients whose viewport contains the paint)
 - Client sends: `{ type: "ping" }` every 30s → server responds `{ type: "pong" }`
+- Client sends: `{ type: "viewport", bounds: { n, s, e, w } }` on connect, reconnect, and each viewport refresh (with fetch margin)
+
+## Geolocation
+
+The app uses `navigator.geolocation.getCurrentPosition` with `enableHighAccuracy: false` and `maximumAge: 300000` (5 min cache to avoid Chrome timeout issues).
+
+Permission flow:
+- First-time visitors see a welcome screen with an "Enable location" button that triggers the native system dialog.
+- Returning visitors with `geo_pref = 'granted'` in localStorage get geolocation automatically.
+- On reload, the app queries `navigator.permissions.query()` first. If the state is `"prompt"` (e.g., Safari one-time grant expired), it clears `geo_pref` and shows the welcome screen again.
+- On timeout, `geo_pref` is cleared so the welcome screen shows on next reload.
+- `status: 'denied'` from `permissions.query` short-circuits without calling `getCurrentPosition` (avoids unnecessary system dialog).
+- `status: 'prompt'` from `permissions.query` does NOT short-circuit — it falls through to `getCurrentPosition` which triggers the native dialog.
 
 ## Key decisions
 
 - **Individual keys with TTL** over single hash: natural Redis expiry, no manual cleanup.
 - **Geo sorted set**: `GEOSEARCH` for efficient viewport bounding-box queries with lazy stale cleanup.
 - **Hash per parent for sub-pixels**: always accessed as a group, `HGETALL` is efficient, whole-set expiry via TTL.
+- **Always load children**: server always returns children data regardless of zoom. Frontend computes parent display (average color + sqrt opacity). No zoom-gating on API, smooth zoom transitions.
 - **Native WebSocket over Socket.io**: fewer dependencies, sufficient for broadcast-only real-time.
+- **Viewport-scoped broadcasts**: clients subscribe with bounds, server only forwards relevant updates. Avoids O(clients×paints) wasted messages.
+- **Single Fly.io machine**: in-memory WS state requires a single machine; cross-machine pub/sub not implemented.
+- **`maximumAge: 300000`** on geolocation: allows Chrome to return cached position instantly instead of timing out when the network location provider is slow.
 - **No build step**: prototype stays simple, `node index.js` and open browser.
 
 ## Out of scope (prototype)
