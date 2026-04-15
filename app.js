@@ -182,6 +182,7 @@ async function refreshViewport() {
   try {
     const pixels = await loadViewport(vb, zoom);
     renderPixels(pixels);
+    sendViewport(vb);
     updateBoundaryVisualization();
   } catch (err) {
     console.error('Viewport refresh failed:', err);
@@ -212,6 +213,9 @@ async function proceedToMap(geoResult, pixelsPromise) {
   }
 
   connectWebSocket(onWSPixel, onWSChild);
+
+  const vb = getViewportBounds();
+  sendViewport(vb);
 
   map.on('moveend', () => {
     scheduleViewportRefresh();

@@ -84,8 +84,8 @@ async function handleRequest(req, res) {
       const pixel = JSON.parse(body);
       await redis.deleteSubpixels(pixel.id);
       await redis.savePixel(pixel);
-      broadcast({ type: 'clearChildren', data: { parentId: pixel.id } });
-      broadcast({ type: 'pixel', data: { ...pixel, hasChildren: false } });
+      broadcastToViewport(pixel.lat, pixel.lng, { type: 'clearChildren', data: { parentId: pixel.id } });
+      broadcastToViewport(pixel.lat, pixel.lng, { type: 'pixel', data: { ...pixel, hasChildren: false } });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -104,7 +104,7 @@ async function handleRequest(req, res) {
 
       const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
 
-      broadcast({ type: 'child', data: { parentId, childKey, childPixel, childrenCount: children.length } });
+      broadcastToViewport(childPixel.lat, childPixel.lng, { type: 'child', data: { parentId, childKey, childPixel, childrenCount: children.length } });
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
@@ -149,6 +149,19 @@ function broadcast(data) {
   }
 }
 
+function inBounds(lat, lng, b) {
+  return lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e;
+}
+
+function broadcastToViewport(lat, lng, data) {
+  const msg = JSON.stringify(data);
+  for (const client of wss.clients) {
+    if (client.readyState === 1 && client.viewport && inBounds(lat, lng, client.viewport)) {
+      client.send(msg);
+    }
+  }
+}
+
 function getConnectedCount() {
   let count = 0;
   for (const client of wss.clients) {
@@ -158,6 +171,7 @@ function getConnectedCount() {
 }
 
 wss.on('connection', ws => {
+  ws.viewport = null;
   console.log(`WS client connected (${getConnectedCount()} total)`);
 
   ws.on('message', raw => {
@@ -165,6 +179,8 @@ wss.on('connection', ws => {
       const msg = JSON.parse(raw);
       if (msg.type === 'ping') {
         ws.send(JSON.stringify({ type: 'pong' }));
+      } else if (msg.type === 'viewport' && msg.bounds) {
+        ws.viewport = msg.bounds;
       }
     } catch {}
   });

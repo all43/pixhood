@@ -108,6 +108,12 @@ function connectWebSocket(onPixel, onChild) {
   _openWS();
 }
 
+function sendViewport(viewportBounds) {
+  if (!_ws || _ws.readyState !== 1) return;
+  const fb = computeFetchBounds(viewportBounds);
+  _ws.send(JSON.stringify({ type: 'viewport', bounds: fb }));
+}
+
 function _openWS() {
   _ws = new WebSocket(CONFIG.WS_URL);
 
@@ -115,6 +121,9 @@ function _openWS() {
     console.log('WS connected');
     _retryDelay = 1000;
     _startHeartbeat();
+    if (_loadedBounds) {
+      _ws.send(JSON.stringify({ type: 'viewport', bounds: _loadedBounds }));
+    }
   });
 
   _ws.addEventListener('message', e => {
