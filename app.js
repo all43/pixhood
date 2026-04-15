@@ -83,9 +83,7 @@ async function getGeolocation(timeout) {
     if (result.state === 'denied') {
       return { status: 'denied' };
     }
-    if (result.state === 'prompt') {
-      return { status: 'prompt' };
-    }
+
   } catch {
   }
 
@@ -296,8 +294,6 @@ async function init() {
     } else if (result.status === 'denied') {
       localStorage.setItem('geo_pref', 'denied');
       await proceedToMap({ status: 'denied' }, geoPromise);
-    } else if (result.status === 'prompt') {
-      proceedToMap({ status: 'skipped' }, geoPromise);
     } else {
       localStorage.removeItem('geo_pref');
       await proceedToMap({ status: 'timeout' }, geoPromise);

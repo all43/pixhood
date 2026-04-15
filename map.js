@@ -289,8 +289,6 @@ async function handleLocate() {
   } else if (result.status === 'timeout') {
     localStorage.removeItem('geo_pref');
     showToast('Location timed out — try again');
-  } else if (result.status === 'prompt') {
-    showToast('Location permission required — try again');
   } else if (result.status === 'unavailable') {
     localStorage.setItem('geo_pref', 'skipped');
     showToast('Location unavailable on this device');
