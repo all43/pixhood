@@ -315,35 +315,48 @@ function initPWAInstallPrompt(map) {
   const prompted = localStorage.getItem('pwaPrompted');
   if (prompted || !('serviceWorker' in navigator)) return;
 
-  const INSTALL_DELAY = 42000;
-  let installTimer = null;
-  let timerStarted = false;
+  const INITIAL_DELAY = 42000;
+  const INACTIVITY_DELAY = 5000;
+  let initialTimer = null;
+  let inactivityTimer = null;
+  let listenersActive = false;
 
-  function startInstallTimer() {
-    if (installTimer) clearTimeout(installTimer);
-
-    installTimer = setTimeout(() => {
-      showToast('Install app for better experience');
-      localStorage.setItem('pwaPrompted', 'true');
-    }, INSTALL_DELAY);
+  function showPrompt() {
+    if (listenersActive) {
+      map.off('moveend', onInactivity);
+      map.off('zoomend', onInactivity);
+      map.off('click', onInactivity);
+      listenersActive = false;
+    }
+    showToast('Install app for better experience');
+    localStorage.setItem('pwaPrompted', 'true');
   }
 
-  function handleFirstInteraction() {
-    if (timerStarted) return;
-    timerStarted = true;
-    startInstallTimer();
+  function onInactivity() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(showPrompt, INACTIVITY_DELAY);
   }
 
-  map.once('moveend', handleFirstInteraction);
-  map.once('zoomend', handleFirstInteraction);
-  map.once('click', handleFirstInteraction);
+  function startInitialTimer() {
+    if (initialTimer) clearTimeout(initialTimer);
+    initialTimer = setTimeout(() => {
+      if (!listenersActive) {
+        map.on('moveend', onInactivity);
+        map.on('zoomend', onInactivity);
+        map.on('click', onInactivity);
+        listenersActive = true;
+      }
+      onInactivity();
+    }, INITIAL_DELAY);
+  }
+
+  startInitialTimer();
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      if (installTimer) clearTimeout(installTimer);
-      installTimer = null;
-    } else if (timerStarted) {
-      startInstallTimer();
+      if (initialTimer) clearTimeout(initialTimer);
+    } else {
+      startInitialTimer();
     }
   });
 }
