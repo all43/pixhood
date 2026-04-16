@@ -57,7 +57,7 @@
   <!-- Service Worker registration (production only) -->
   <script>
     if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
-      navigator.serviceWorker.register('/sw.js')
+      navigator.serviceWorker.register('/sw.js?v=20260416b')
         .then(reg => console.log('SW registered:', reg.scope))
         .catch(err => console.log('SW registration failed:', err));
     }

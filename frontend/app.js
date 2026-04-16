@@ -1,8 +1,11 @@
 let selectedColor = '#FF0000';
 let slowHintTimer = null;
 let _refreshTimer = null;
+let _toastTimer = null;
 const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
+const PWA_STATE_KEY = 'pwa_install_state';
+const PWA_RETRY_MS = [3, 14, 60].map(days => days * 24 * 60 * 60 * 1000);
 
 function getSelectedColor() {
   return selectedColor;
@@ -31,9 +34,93 @@ function initColorPicker() {
 
 function showToast(msg) {
   const toast = document.getElementById('toast');
+  if (_toastTimer) {
+    clearTimeout(_toastTimer);
+    _toastTimer = null;
+  }
+  toast.classList.remove('has-action');
   toast.textContent = msg;
   toast.classList.add('visible');
-  setTimeout(() => toast.classList.remove('visible'), 3000);
+  _toastTimer = setTimeout(() => {
+    toast.classList.remove('visible');
+    _toastTimer = null;
+  }, 3000);
+}
+
+function hideToast() {
+  if (_toastTimer) {
+    clearTimeout(_toastTimer);
+    _toastTimer = null;
+  }
+  const toast = document.getElementById('toast');
+  toast.classList.remove('visible', 'has-action');
+}
+
+function showActionToast(msg, actionLabel, onAction, dismissLabel, onDismiss) {
+  const toast = document.getElementById('toast');
+  if (_toastTimer) {
+    clearTimeout(_toastTimer);
+    _toastTimer = null;
+  }
+
+  toast.classList.add('has-action');
+  toast.textContent = '';
+
+  const message = document.createElement('span');
+  message.className = 'toast-message';
+  message.textContent = msg;
+
+  const actionBtn = document.createElement('button');
+  actionBtn.className = 'toast-action';
+  actionBtn.type = 'button';
+  actionBtn.textContent = actionLabel;
+  actionBtn.addEventListener('click', async () => {
+    try {
+      await onAction();
+    } catch (err) {
+      console.warn('Toast action failed:', err);
+    }
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'toast-dismiss';
+  dismissBtn.type = 'button';
+  dismissBtn.textContent = dismissLabel;
+  dismissBtn.addEventListener('click', () => {
+    hideToast();
+    if (onDismiss) onDismiss();
+  });
+
+  toast.appendChild(message);
+  toast.appendChild(actionBtn);
+  toast.appendChild(dismissBtn);
+  toast.classList.add('visible');
+}
+
+function readPWAState() {
+  const defaults = {
+    dismissCount: 0,
+    nextEligibleAt: 0,
+    nativePromptAttempts: 0,
+    installed: false
+  };
+  try {
+    const raw = localStorage.getItem(PWA_STATE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return {
+      dismissCount: Number(parsed.dismissCount) || 0,
+      nextEligibleAt: Number(parsed.nextEligibleAt) || 0,
+      nativePromptAttempts: Number(parsed.nativePromptAttempts) || 0,
+      installed: parsed.installed === true
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function writePWAState(state) {
+  localStorage.setItem(PWA_STATE_KEY, JSON.stringify(state));
 }
 
 function showLocationBanner(msg) {
@@ -287,7 +374,7 @@ async function proceedToMap(geoResult, pixelsPromise) {
     scheduleViewportRefresh();
   });
 
-  // PWA install prompt: 42s timer starts on first interaction, resets on visibility change
+  // PWA install CTA: delayed, then shown after brief inactivity
   initPWAInstallPrompt(map);
 
   hideOverlay();
@@ -375,15 +462,57 @@ async function init() {
 }
 
 function initPWAInstallPrompt(map) {
-  const prompted = localStorage.getItem('pwaPrompted');
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-  if (prompted || isStandalone || !('serviceWorker' in navigator)) return;
+  if (isStandalone || !('serviceWorker' in navigator)) return;
 
-  const INITIAL_DELAY = 42000;
-  const INACTIVITY_DELAY = 5000;
+  localStorage.removeItem('pwaPrompted');
+
+  let pwaState = readPWAState();
+  if (pwaState.installed) return;
+
+  const INITIAL_DELAY = 18000;
+  const INACTIVITY_DELAY = 3000;
   let initialTimer = null;
   let inactivityTimer = null;
   let listenersActive = false;
+  let promptWindowOpen = false;
+  let promptShownThisSession = false;
+  let deferredInstallEvent = null;
+
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+  function cleanupSession() {
+    if (initialTimer) {
+      clearTimeout(initialTimer);
+      initialTimer = null;
+    }
+    if (inactivityTimer) {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = null;
+    }
+    detachInactivityListeners();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+    window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+    window.removeEventListener('appinstalled', onAppInstalled);
+  }
+
+  function isEligibleNow() {
+    return Date.now() >= (pwaState.nextEligibleAt || 0);
+  }
+
+  function registerDismiss() {
+    pwaState.dismissCount += 1;
+    const cooldown = PWA_RETRY_MS[Math.min(pwaState.dismissCount - 1, PWA_RETRY_MS.length - 1)];
+    pwaState.nextEligibleAt = Date.now() + cooldown;
+    writePWAState(pwaState);
+  }
+
+  function registerInstalled() {
+    pwaState.installed = true;
+    pwaState.nextEligibleAt = 0;
+    writePWAState(pwaState);
+    hideToast();
+  }
 
   function detachInactivityListeners() {
     if (!listenersActive) return;
@@ -393,24 +522,92 @@ function initPWAInstallPrompt(map) {
     listenersActive = false;
   }
 
-  function showPrompt() {
+  function showInstallCta() {
+    if (promptShownThisSession || !promptWindowOpen || pwaState.installed || !isEligibleNow()) {
+      return;
+    }
+
+    if (!deferredInstallEvent && !isIOS) {
+      return;
+    }
+
     if (inactivityTimer) {
       clearTimeout(inactivityTimer);
       inactivityTimer = null;
     }
+
     detachInactivityListeners();
-    showToast('Install app for better experience');
-    localStorage.setItem('pwaPrompted', 'true');
-    document.removeEventListener('visibilitychange', onVisibilityChange);
+
+    promptShownThisSession = true;
+    const message = deferredInstallEvent
+      ? 'Install Pixhood for faster launch and fullscreen mode.'
+      : 'Install Pixhood: Share > Add to Home Screen';
+
+    showActionToast(
+      message,
+      deferredInstallEvent ? 'Install' : 'How',
+      async () => {
+        if (!deferredInstallEvent) {
+          showToast('On iOS: tap Share, then Add to Home Screen');
+          cleanupSession();
+          return;
+        }
+
+        const promptEvent = deferredInstallEvent;
+        deferredInstallEvent = null;
+
+        pwaState.nativePromptAttempts += 1;
+        writePWAState(pwaState);
+
+        promptEvent.prompt();
+        let outcome = 'dismissed';
+        try {
+          const choice = await promptEvent.userChoice;
+          outcome = choice && choice.outcome ? choice.outcome : 'dismissed';
+        } catch {
+        }
+
+        if (outcome === 'accepted') {
+          registerInstalled();
+        } else {
+          registerDismiss();
+          hideToast();
+        }
+
+        cleanupSession();
+      },
+      'Later',
+      () => {
+        registerDismiss();
+        cleanupSession();
+      }
+    );
   }
 
   function onInactivity() {
     if (inactivityTimer) clearTimeout(inactivityTimer);
-    inactivityTimer = setTimeout(showPrompt, INACTIVITY_DELAY);
+    inactivityTimer = setTimeout(() => {
+      promptWindowOpen = true;
+      showInstallCta();
+    }, INACTIVITY_DELAY);
+  }
+
+  function onBeforeInstallPrompt(event) {
+    event.preventDefault();
+    deferredInstallEvent = event;
+    if (promptWindowOpen) {
+      showInstallCta();
+    }
+  }
+
+  function onAppInstalled() {
+    registerInstalled();
+    cleanupSession();
   }
 
   function startInitialTimer() {
     if (initialTimer) clearTimeout(initialTimer);
+    promptWindowOpen = false;
     initialTimer = setTimeout(() => {
       if (!listenersActive) {
         map.on('moveend', onInactivity);
@@ -432,12 +629,16 @@ function initPWAInstallPrompt(map) {
         clearTimeout(inactivityTimer);
         inactivityTimer = null;
       }
+      promptWindowOpen = false;
       detachInactivityListeners();
       return;
     }
 
     startInitialTimer();
   }
+
+  window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+  window.addEventListener('appinstalled', onAppInstalled);
 
   startInitialTimer();
 
