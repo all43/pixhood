@@ -68,14 +68,22 @@ No framework, no bundler, no build step. Vanilla JS with Leaflet.js (CDN). Scrip
 
 **Prerequisites**: Node.js 18+, Redis ([Redis Cloud free tier](https://redis.io/cloud/) or local `redis-server`)
 
+Two terminals:
+
 ```bash
-git clone git@github.com:all43/pixhood.git
-cd pixhood/server
+# Terminal 1: Backend
+cd server
 npm install
-REDIS_URL=redis://localhost:6379 node index.js
+REDIS_URL=redis://localhost:6379 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+```bash
+# Terminal 2: Frontend
+cd frontend
+npm install
+npm run dev
+# open http://localhost:3000
+```
 
 ---
 
@@ -122,19 +130,25 @@ Sessions are anonymous — a UUID in `localStorage`. No sign-up, no accounts.
 
 ```
 pixhood/
-├── server/
-│   ├── index.js      # HTTP + WebSocket server, viewport-scoped broadcasts
-│   ├── redis.js      # Redis client: geo-indexed queries, TTL management
-│   ├── fly.toml      # Fly.io: single machine, 256MB, fra region
+├── frontend/          # Static frontend (Cloudflare Pages)
+│   ├── index.html     # Entry point, loads Leaflet CDN + app scripts
+│   ├── style.css
+│   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE, SUB_GRID_SIZE, palette
+│   ├── grid.js        # Tile + sub-tile key computation, snapToTile(), snapToSubTile()
+│   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
+│   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
+│   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
+│   ├── favicon.svg
+│   ├── _headers       # Cloudflare Pages cache headers
+│   └── package.json   # Dev server (serve)
+├── server/            # Backend API (Fly.io)
+│   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
+│   ├── redis.js       # Redis client, geo-indexed queries, TTL management
+│   ├── fly.toml       # Fly.io configuration
 │   ├── Dockerfile
 │   └── package.json
-├── index.html        # Welcome screen, loading spinner, location banner
-├── style.css         # Topbar, palette, map, pin, welcome, mobile styles
-├── config.js         # TILE_SIZE, LNG_STEP, palette, API/WS URLs
-├── grid.js           # tileKey(), snapToTile(), snapToSubTile()
-├── pixels.js         # Viewport fetch, pixel writes, WebSocket + heartbeat
-├── map.js            # Leaflet map, grid/sub-grid overlays, rendering
-└── app.js            # Init flow, geolocation, color picker, viewport wiring
+├── CLAUDE.md          # Developer documentation
+└── README.md          # User-facing docs
 ```
 
 ---
@@ -148,8 +162,8 @@ Backend: **Fly.io** ([api.pixhood.art](https://api.pixhood.art)) + managed Redis
 # Backend
 cd server && fly deploy
 
-# Frontend
-cd .. && wrangler pages deploy . --project-name=pixhood --commit-dirty=true
+# Frontend (from project root)
+wrangler pages deploy frontend/ --project-name=pixhood
 ```
 
 ---

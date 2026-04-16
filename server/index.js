@@ -1,11 +1,8 @@
 const http = require('http');
-const fs = require('fs');
-const path = require('path');
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
 
 const PORT = process.env.PORT || 3000;
-const STATIC_DIR = path.join(__dirname, '..');
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
 
@@ -14,12 +11,6 @@ function setCORS(res) {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
-
-const MIME = {
-  '.html': 'text/html',
-  '.css':  'text/css',
-  '.js':   'application/javascript',
-};
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -116,25 +107,8 @@ async function handleRequest(req, res) {
     return;
   }
 
-  let filePath = url.pathname === '/' ? '/index.html' : url.pathname;
-  filePath = path.join(STATIC_DIR, filePath);
-
-  if (!filePath.startsWith(STATIC_DIR)) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return;
-  }
-
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404);
-      res.end('Not found');
-      return;
-    }
-    const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-    res.end(data);
-  });
+  res.writeHead(404);
+  res.end('Not found');
 }
 
 const server = http.createServer(handleRequest);

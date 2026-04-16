@@ -14,37 +14,50 @@ Live at [pixhood.art](https://pixhood.art). Backend at [api.pixhood.art](https:/
 
 **Real-time**: Viewport-scoped WebSocket broadcasts. Clients subscribe with their current viewport bounds; server only forwards pixel updates to clients whose viewport contains the painted tile. Client sends heartbeat pings every 30s.
 
-**Deployment**: Single Fly.io machine (required for in-memory WS state; cross-machine pub/sub not implemented). Frontend on Cloudflare Pages.
+**Deployment**: Frontend deployed to Cloudflare Pages (`frontend/` directory). Backend deployed to Fly.io (`server/` directory). Single machine required for in-memory WebSocket state.
 
 ## Running locally
 
+**Prerequisites**: Node.js 18+, Redis ([Redis Cloud free tier](https://redis.io/cloud/) or local `redis-server`)
+
+Two terminals:
+
 ```bash
+# Terminal 1: Backend
 cd server
 npm install
-REDIS_URL=redis://localhost:6379 node index.js
-# open http://localhost:3000
+REDIS_URL=redis://localhost:6379 npm run dev
 ```
 
-For dev with auto-restart:
 ```bash
-REDIS_URL=redis://localhost:6379 npm run dev
+# Terminal 2: Frontend
+cd frontend
+npm install
+npm run dev
+# open http://localhost:3000
 ```
 
 ## File structure
 
 ```
 pixhood/
-├── server/
-│   ├── index.js      # HTTP + WebSocket server, viewport API, child pixel API
-│   ├── redis.js      # Redis client, geo-indexed queries, TTL management
+├── frontend/          # Static frontend (Cloudflare Pages)
+│   ├── index.html     # Entry point, loads Leaflet CDN + app scripts
+│   ├── style.css
+│   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE, SUB_GRID_SIZE, palette
+│   ├── grid.js        # Tile + sub-tile key computation
+│   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
+│   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
+│   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
+│   ├── favicon.svg
+│   ├── _headers       # Cloudflare Pages cache headers
+│   └── package.json   # Dev server (serve)
+├── server/            # Backend API (Fly.io)
+│   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
+│   ├── redis.js       # Redis client, geo-indexed queries, TTL management
 │   └── package.json
-├── index.html        # Entry point, loads Leaflet CDN + app scripts
-├── style.css
-├── config.js         # Constants: API_URL, WS_URL, TILE_SIZE, SUB_GRID_SIZE, palette
-├── grid.js           # Tile + sub-tile key computation, snapToTile(), snapToSubTile()
-├── pixels.js         # Viewport fetch, child pixel write, WebSocket + heartbeat
-├── map.js            # Leaflet map init, renderPixel(), sub-grid rendering
-└── app.js            # Bootstrap: geolocation, color picker, viewport refresh wiring
+├── CLAUDE.md          # This file
+└── README.md          # User-facing docs
 ```
 
 Script load order in `index.html` matters: `config → grid → pixels → map → app`.
@@ -127,7 +140,7 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` �
 | `GET` | `/pixels?n=&s=&e=&w=` | Viewport query: pixels in bounding box. Always includes children. |
 | `POST` | `/pixels` | Save parent pixel, erase children, broadcast |
 | `POST` | `/pixels/child` | Save child pixel, broadcast |
-| `GET` | `/*` | Serve static files from project root |
+| `WS` | WebSocket connection | Real-time updates, ping/pong, viewport subscription |
 
 WebSocket: `wss://api.pixhood.art`
 - Server pushes: `{ type: "pixel" }`, `{ type: "child" }`, `{ type: "clearChildren" }` (only to clients whose viewport contains the paint)

@@ -1,0 +1,12 @@
+{
+  "name": "pixhood-frontend",
+  "version": "1.0.0",
+  "description": "Pixhood frontend - Geo-anchored collaborative pixel art",
+  "scripts": {
+    "dev": "serve -l 3000",
+    "preview": "serve -l 3000"
+  },
+  "devDependencies": {
+    "serve": "^14.0.0"
+  }
+}
