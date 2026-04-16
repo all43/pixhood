@@ -125,6 +125,11 @@ self.addEventListener('fetch', event => {
   }
 
   const url = new URL(event.request.url);
+
+  // Skip service worker itself
+  if (url.pathname === '/sw.js') {
+    return;
+  }
   
   // Network-first for API calls
   if (url.pathname.startsWith('/pixels') || url.pathname.startsWith('/ws')) {

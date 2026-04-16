@@ -313,7 +313,8 @@ async function init() {
 
 function initPWAInstallPrompt(map) {
   const prompted = localStorage.getItem('pwaPrompted');
-  if (prompted || !('serviceWorker' in navigator)) return;
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  if (prompted || isStandalone || !('serviceWorker' in navigator)) return;
 
   const INITIAL_DELAY = 42000;
   const INACTIVITY_DELAY = 5000;
@@ -321,15 +322,23 @@ function initPWAInstallPrompt(map) {
   let inactivityTimer = null;
   let listenersActive = false;
 
+  function detachInactivityListeners() {
+    if (!listenersActive) return;
+    map.off('moveend', onInactivity);
+    map.off('zoomend', onInactivity);
+    map.off('click', onInactivity);
+    listenersActive = false;
+  }
+
   function showPrompt() {
-    if (listenersActive) {
-      map.off('moveend', onInactivity);
-      map.off('zoomend', onInactivity);
-      map.off('click', onInactivity);
-      listenersActive = false;
+    if (inactivityTimer) {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = null;
     }
+    detachInactivityListeners();
     showToast('Install app for better experience');
     localStorage.setItem('pwaPrompted', 'true');
+    document.removeEventListener('visibilitychange', onVisibilityChange);
   }
 
   function onInactivity() {
@@ -350,15 +359,26 @@ function initPWAInstallPrompt(map) {
     }, INITIAL_DELAY);
   }
 
+  function onVisibilityChange() {
+    if (document.hidden) {
+      if (initialTimer) {
+        clearTimeout(initialTimer);
+        initialTimer = null;
+      }
+      if (inactivityTimer) {
+        clearTimeout(inactivityTimer);
+        inactivityTimer = null;
+      }
+      detachInactivityListeners();
+      return;
+    }
+
+    startInitialTimer();
+  }
+
   startInitialTimer();
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      if (initialTimer) clearTimeout(initialTimer);
-    } else {
-      startInitialTimer();
-    }
-  });
+  document.addEventListener('visibilitychange', onVisibilityChange);
 }
 
 document.addEventListener('DOMContentLoaded', init);
