@@ -8,6 +8,14 @@
 
 ---
 
+## Screenshots
+
+<!-- TODO: map view with painted pixels -->
+<!-- TODO: sub-grid zoom (level 21+) -->
+<!-- TODO: color picker + welcome screen -->
+
+---
+
 ## What it does
 
 - Open the app → welcome screen explains why location is useful, then asks permission
@@ -152,3 +160,9 @@ cd .. && wrangler pages deploy . --project-name=pixhood --commit-dirty=true
 - **Single machine** — WebSocket state is in-memory; scaling requires Redis pub/sub between machines
 - **No rate limiting** — a single client can spam paints
 - **No accounts** — anonymous sessions only, no pixel ownership
+
+---
+
+## License
+
+MIT © 2025 Evgenii Malikov
