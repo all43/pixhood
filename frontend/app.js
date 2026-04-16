@@ -1,6 +1,8 @@
 let selectedColor = '#FF0000';
 let slowHintTimer = null;
 let _refreshTimer = null;
+const LAST_GEO_KEY = 'last_geo';
+const GEO_MAX_AGE_MS = 5 * 60 * 1000;
 
 function getSelectedColor() {
   return selectedColor;
@@ -77,31 +79,91 @@ async function getGeolocation(timeout) {
     return { status: 'unavailable' };
   }
 
+  const storedGeo = (() => {
+    try {
+      const raw = localStorage.getItem(LAST_GEO_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.lat !== 'number' || typeof parsed.lng !== 'number') return null;
+      const savedAt = typeof parsed.savedAt === 'number' ? parsed.savedAt : 0;
+      return { lat: parsed.lat, lng: parsed.lng, savedAt };
+    } catch {
+      return null;
+    }
+  })();
+
+  let permState = 'unknown';
   try {
     const result = await navigator.permissions.query({ name: 'geolocation' });
-    console.info('[geo] permission state:', result.state);
-    if (result.state === 'denied') {
+    permState = result.state;
+    console.info('[geo] permission state:', permState);
+    if (permState === 'denied') {
       return { status: 'denied' };
     }
 
   } catch {
   }
 
-  const t0 = Date.now();
-  return new Promise(resolve => {
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        console.info('[geo] acquired in', Date.now() - t0, 'ms');
-        resolve({ status: 'granted', lat: pos.coords.latitude, lng: pos.coords.longitude });
-      },
-      err => {
-        const map = { 1: 'denied', 2: 'unavailable', 3: 'timeout' };
-        console.warn('[geo] failed after', Date.now() - t0, 'ms —', err.code, err.message);
-        resolve({ status: map[err.code] || 'error' });
-      },
-      { timeout: timeout || 60000, enableHighAccuracy: false, maximumAge: 300000 }
-    );
+  const requestPosition = opts => {
+    const t0 = Date.now();
+    return new Promise(resolve => {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          console.info('[geo] acquired in', Date.now() - t0, 'ms');
+          resolve({ status: 'granted', lat: pos.coords.latitude, lng: pos.coords.longitude });
+        },
+        err => {
+          const map = { 1: 'denied', 2: 'unavailable', 3: 'timeout' };
+          console.warn('[geo] failed after', Date.now() - t0, 'ms —', err.code, err.message);
+          resolve({ status: map[err.code] || 'error' });
+        },
+        opts
+      );
+    });
+  };
+
+  // Chrome can intermittently fail immediately after reload.
+  // First, try quickly with normal cache settings.
+  const fastCached = await requestPosition({
+    timeout: 2000,
+    enableHighAccuracy: false,
+    maximumAge: GEO_MAX_AGE_MS
   });
+  if (fastCached.status === 'granted') {
+    return fastCached;
+  }
+
+  const requestedTimeout = timeout ?? 60000;
+  const mainTimeout = permState === 'granted'
+    ? Math.min(requestedTimeout, 10000)
+    : requestedTimeout;
+  const fresh = await requestPosition({
+    timeout: mainTimeout,
+    enableHighAccuracy: false,
+    maximumAge: 0
+  });
+  if (fresh.status === 'granted' || fresh.status === 'denied') {
+    return fresh;
+  }
+
+  const storedFreshEnough = storedGeo && (Date.now() - storedGeo.savedAt) < GEO_MAX_AGE_MS;
+  if (storedFreshEnough && fresh.status !== 'denied') {
+    console.info('[geo] using last known stored position (fallback)');
+    return { status: 'granted', lat: storedGeo.lat, lng: storedGeo.lng };
+  }
+
+  // Final short cached retry for transient Chrome provider failures.
+  const retryCached = await requestPosition({
+    timeout: 3000,
+    enableHighAccuracy: false,
+    maximumAge: GEO_MAX_AGE_MS
+  });
+  if (retryCached.status === 'granted') {
+    return retryCached;
+  }
+
+  return fresh;
+
 }
 
 function handleLocationResult(result) {
@@ -111,6 +173,7 @@ function handleLocationResult(result) {
   switch (result.status) {
     case 'granted':
       showUserPosition(lat, lng);
+      localStorage.setItem(LAST_GEO_KEY, JSON.stringify({ lat, lng, savedAt: Date.now() }));
       localStorage.setItem('geo_pref', 'granted');
       break;
     case 'skipped':
