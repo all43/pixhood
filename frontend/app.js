@@ -224,6 +224,9 @@ async function proceedToMap(geoResult, pixelsPromise) {
     scheduleViewportRefresh();
   });
 
+  // PWA install prompt: 42s timer starts on first interaction, resets on visibility change
+  initPWAInstallPrompt(map);
+
   hideOverlay();
 }
 
@@ -305,6 +308,43 @@ async function init() {
   document.getElementById('btn-skip-geo').addEventListener('click', async () => {
     localStorage.setItem('geo_pref', 'skipped');
     await proceedToMap({ status: 'skipped' }, geoPromise);
+  });
+}
+
+function initPWAInstallPrompt(map) {
+  const prompted = localStorage.getItem('pwaPrompted');
+  if (prompted || !('serviceWorker' in navigator)) return;
+
+  const INSTALL_DELAY = 42000;
+  let installTimer = null;
+  let timerStarted = false;
+
+  function startInstallTimer() {
+    if (installTimer) clearTimeout(installTimer);
+
+    installTimer = setTimeout(() => {
+      showToast('Install app for better experience');
+      localStorage.setItem('pwaPrompted', 'true');
+    }, INSTALL_DELAY);
+  }
+
+  function handleFirstInteraction() {
+    if (timerStarted) return;
+    timerStarted = true;
+    startInstallTimer();
+  }
+
+  map.once('moveend', handleFirstInteraction);
+  map.once('zoomend', handleFirstInteraction);
+  map.once('click', handleFirstInteraction);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (installTimer) clearTimeout(installTimer);
+      installTimer = null;
+    } else if (timerStarted) {
+      startInstallTimer();
+    }
   });
 }
 
