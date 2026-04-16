@@ -4,9 +4,12 @@
   "description": "Pixhood frontend - Geo-anchored collaborative pixel art",
   "scripts": {
     "dev": "serve -l 3000",
-    "preview": "serve -l 3000"
+    "build": "node build.js",
+    "preview": "serve -l 3000 dist",
+    "generate-icons": "node scripts/generate-icons.js"
   },
   "devDependencies": {
-    "serve": "^14.0.0"
+    "serve": "^14.0.0",
+    "sharp": "^0.33.0"
   }
 }

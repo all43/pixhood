@@ -3,10 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="description" content="Paint pixels on a map — ephemeral collaborative art" />
+  <meta name="theme-color" content="#16213e" />
+  <link rel="manifest" href="/manifest.json" />
   <title>Pixhood</title>
-  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=1" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="style.css?v=1" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="app">
@@ -45,10 +48,19 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- App (order matters: config → grid → pixels → map → app) -->
-  <script src="config.js?v=1"></script>
-  <script src="grid.js?v=1"></script>
-  <script src="pixels.js?v=1"></script>
-  <script src="map.js?v=1"></script>
-  <script src="app.js?v=1"></script>
+  <script src="config.js"></script>
+  <script src="grid.js"></script>
+  <script src="pixels.js"></script>
+  <script src="map.js"></script>
+  <script src="app.js"></script>
+
+  <!-- Service Worker registration (production only) -->
+  <script>
+    if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
+      navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('SW registered:', reg.scope))
+        .catch(err => console.log('SW registration failed:', err));
+    }
+  </script>
 </body>
 </html>
