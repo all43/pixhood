@@ -141,23 +141,27 @@ self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) {
-        // Return cached, update in background
-        fetch(event.request).then(response => {
+// Return cached, update in background
+      fetch(event.request).then(response => {
+        if (response.ok && (event.request.mode === 'navigate' || event.request.url.startsWith('http'))) {
           caches.open(CACHE_NAME).then(cache => {
             cache.put(event.request, response);
           });
-        }).catch(() => {});
-        return cached;
+        }
+      }).catch(() => {});
+      return cached;
       }
       
       return fetch(event.request).then(response => {
-        if (response.ok) {
+        if (response.ok && (event.request.mode === 'navigate' || event.request.url.startsWith('http'))) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => {
             cache.put(event.request, clone);
           });
         }
         return response;
+      }).catch(() => {
+        // Skip non-http(s) requests (e.g., chrome-extension://)
       });
     })
   );
