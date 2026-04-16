@@ -6,7 +6,7 @@ Live at [pixhood.art](https://pixhood.art). Backend at [api.pixhood.art](https:/
 
 ## Architecture
 
-**Frontend**: Vanilla JS, no framework, no build step. Leaflet.js (CDN) for the map. Native browser `WebSocket` + `fetch` for backend communication. Hosted on Cloudflare Pages.
+**Frontend**: Vanilla JS with minimal build step. Leaflet.js (CDN) for the map. Native browser `WebSocket` + `fetch` for backend communication. Hosted on Cloudflare Pages. PWA-ready with service worker for caching.
 
 **Backend**: Node.js HTTP server (`server/index.js`) with native WebSocket via `ws` package. Hosted on Fly.io.
 
@@ -50,8 +50,17 @@ pixhood/
 │   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
 │   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
 │   ├── favicon.svg
-│   ├── _headers       # Cloudflare Pages cache headers
-│   └── package.json   # Dev server (serve)
+│   ├── build.js       # Build script: hashes files, generates SW
+│   ├── wrangler.toml  # Cloudflare Pages configuration
+│   ├── package.json   # Dev server (serve), build scripts
+│   ├── public/        # Static assets (copied to dist/)
+│   │   ├── manifest.json    # PWA manifest
+│   │   ├── icon-192.png   # PWA icon
+│   │   ├── icon-512.png  # PWA icon
+│   │   └── _headers     # Cache headers
+│   ├── scripts/       # Build utilities
+│   │   └── generate-icons.js
+│   └── dist/          # Build output (gitignored)
 ├── server/            # Backend API (Fly.io)
 │   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
 │   ├── redis.js       # Redis client, geo-indexed queries, TTL management

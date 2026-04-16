@@ -139,8 +139,17 @@ pixhood/
 │   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
 │   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
 │   ├── favicon.svg
-│   ├── _headers       # Cloudflare Pages cache headers
-│   └── package.json   # Dev server (serve)
+│   ├── build.js       # Build script: hashes files, generates SW
+│   ├── wrangler.toml  # Cloudflare Pages configuration
+│   ├── package.json   # Dev server (serve), build scripts
+│   ├── public/        # Static assets (copied to dist/)
+│   │   ├── manifest.json    # PWA manifest
+│   │   ├── icon-192.png   # PWA icon
+│   │   ├── icon-512.png   # PWA icon
+│   │   └── _headers      # Cache headers
+│   ├── scripts/       # Build utilities
+│   │   └── generate-icons.js
+│   └── dist/          # Build output (gitignored)
 ├── server/            # Backend API (Fly.io)
 │   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
 │   ├── redis.js       # Redis client, geo-indexed queries, TTL management
@@ -162,8 +171,14 @@ Backend: **Fly.io** ([api.pixhood.art](https://api.pixhood.art)) + managed Redis
 # Backend
 cd server && fly deploy
 
-# Frontend (from project root)
-wrangler pages deploy frontend/ --project-name=pixhood
+# Frontend
+cd frontend
+npm install
+npm run build
+wrangler pages deploy dist/ --project-name=pixhood
+
+# Or use wrangler.toml (auto-runs build):
+wrangler pages deploy .
 ```
 
 ---
