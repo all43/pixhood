@@ -1,3 +1,4 @@
 .DS_Store
 .wrangler/
 server/node_modules/
+frontend/node_modules/
