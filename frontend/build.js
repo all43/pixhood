@@ -126,6 +126,15 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(event.request.url);
 
+  // Cache API only supports http(s) GET requests
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return;
+  }
+
   // Skip service worker itself
   if (url.pathname === '/sw.js') {
     return;
@@ -148,7 +157,7 @@ self.addEventListener('fetch', event => {
       if (cached) {
 // Return cached, update in background
       fetch(event.request).then(response => {
-        if (response.ok && (event.request.mode === 'navigate' || event.request.url.startsWith('http'))) {
+        if (response.ok) {
           caches.open(CACHE_NAME).then(cache => {
             cache.put(event.request, response);
           });
@@ -158,7 +167,7 @@ self.addEventListener('fetch', event => {
       }
       
       return fetch(event.request).then(response => {
-        if (response.ok && (event.request.mode === 'navigate' || event.request.url.startsWith('http'))) {
+        if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => {
             cache.put(event.request, clone);
@@ -166,7 +175,7 @@ self.addEventListener('fetch', event => {
         }
         return response;
       }).catch(() => {
-        // Skip non-http(s) requests (e.g., chrome-extension://)
+        // Ignore fetch errors for offline fallbacks
       });
     })
   );
