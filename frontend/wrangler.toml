@@ -1,12 +1,2 @@
 name = "pixhood"
-compatibility_date = "2024-04-15"
-
-[build]
-command = "npm run build"
-cwd = "frontend"
-
-[builds]
-publish = "dist"
-
-[[pages.builds]]
-directory = "frontend/dist"
+pages_build_output_dir = "dist"
