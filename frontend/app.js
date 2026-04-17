@@ -1,4 +1,4 @@
-let selectedColor = '#FF0000';
+let selectedColor = CONFIG.DEFAULT_COLOR;
 let slowHintTimer = null;
 let _refreshTimer = null;
 let _toastTimer = null;
@@ -29,7 +29,7 @@ function initColorPicker() {
     swatch.addEventListener('click', () => selectColor(color));
     palette.appendChild(swatch);
   });
-  selectColor('#FF0000');
+  selectColor(CONFIG.DEFAULT_COLOR);
 }
 
 function showToast(msg) {
@@ -44,7 +44,7 @@ function showToast(msg) {
   _toastTimer = setTimeout(() => {
     toast.classList.remove('visible');
     _toastTimer = null;
-  }, 3000);
+  }, CONFIG.TOAST_DURATION);
 }
 
 function hideToast() {
@@ -146,7 +146,7 @@ function scheduleSlowHint() {
   slowHintTimer = setTimeout(() => {
     const hint = document.getElementById('loading-slow-hint');
     if (hint) hint.textContent = 'This can take a few seconds after inactivity\u2026';
-  }, 1500);
+  }, CONFIG.SLOW_HINT_DELAY);
 }
 
 function clearSlowHint() {
@@ -212,7 +212,7 @@ async function getGeolocation(timeout) {
   // Chrome can intermittently fail immediately after reload.
   // First, try quickly with normal cache settings.
   const fastCached = await requestPosition({
-    timeout: 2000,
+    timeout: CONFIG.GEO_FAST_TIMEOUT,
     enableHighAccuracy: false,
     maximumAge: GEO_MAX_AGE_MS
   });
@@ -220,9 +220,9 @@ async function getGeolocation(timeout) {
     return fastCached;
   }
 
-  const requestedTimeout = timeout ?? 60000;
+  const requestedTimeout = timeout ?? CONFIG.GEO_DEFAULT_TIMEOUT;
   const mainTimeout = permState === 'granted'
-    ? Math.min(requestedTimeout, 10000)
+    ? Math.min(requestedTimeout, CONFIG.GEO_GRANTED_TIMEOUT)
     : requestedTimeout;
   const fresh = await requestPosition({
     timeout: mainTimeout,
@@ -241,7 +241,7 @@ async function getGeolocation(timeout) {
 
   // Final short cached retry for transient Chrome provider failures.
   const retryCached = await requestPosition({
-    timeout: 3000,
+    timeout: CONFIG.GEO_RETRY_TIMEOUT,
     enableHighAccuracy: false,
     maximumAge: GEO_MAX_AGE_MS
   });
@@ -294,7 +294,7 @@ function onWSPixel(data) {
 }
 
 function onWSChild(data, msgType) {
-  if (msgType === 'clearChildren') {
+  if (msgType === CONFIG.WS_TYPE_CLEAR_CHILDREN) {
     if (data.parentId) removeChildren(data.parentId);
     return;
   }
@@ -339,7 +339,7 @@ async function refreshViewport() {
 
 function scheduleViewportRefresh() {
   if (_refreshTimer) clearTimeout(_refreshTimer);
-  _refreshTimer = setTimeout(refreshViewport, 300);
+  _refreshTimer = setTimeout(refreshViewport, CONFIG.VIEWPORT_DEBOUNCE_MS);
 }
 
 async function proceedToMap(geoResult, pixelsPromise) {
@@ -385,7 +385,7 @@ async function init() {
   document.querySelector('.banner-close').addEventListener('click', hideLocationBanner);
 
   const geoPromise = (async () => {
-    const vb = { n: CONFIG.DEFAULT_LAT + 0.01, s: CONFIG.DEFAULT_LAT - 0.01, e: CONFIG.DEFAULT_LNG + 0.01, w: CONFIG.DEFAULT_LNG - 0.01 };
+    const vb = { n: CONFIG.DEFAULT_LAT + CONFIG.INIT_VIEWPORT_SPAN, s: CONFIG.DEFAULT_LAT - CONFIG.INIT_VIEWPORT_SPAN, e: CONFIG.DEFAULT_LNG + CONFIG.INIT_VIEWPORT_SPAN, w: CONFIG.DEFAULT_LNG - CONFIG.INIT_VIEWPORT_SPAN };
     return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
   })();
 
@@ -393,10 +393,10 @@ async function init() {
 
   const makeInitialPromise = (lat, lng) => {
     const vb = {
-      n: lat + 0.01,
-      s: lat - 0.01,
-      e: lng + 0.01,
-      w: lng - 0.01
+      n: lat + CONFIG.INIT_VIEWPORT_SPAN,
+      s: lat - CONFIG.INIT_VIEWPORT_SPAN,
+      e: lng + CONFIG.INIT_VIEWPORT_SPAN,
+      w: lng - CONFIG.INIT_VIEWPORT_SPAN
     };
     return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
   };
@@ -413,7 +413,7 @@ async function init() {
       localStorage.removeItem('geo_pref');
     } else {
       showSpinnerScreen('Waiting for location\u2026');
-      const result = await getGeolocation(10000);
+      const result = await getGeolocation(CONFIG.GEO_GRANTED_TIMEOUT);
       if (result.status === 'granted') {
         const lat = result.lat || CONFIG.DEFAULT_LAT;
         const lng = result.lng || CONFIG.DEFAULT_LNG;
@@ -441,7 +441,7 @@ async function init() {
 
   document.getElementById('btn-enable-geo').addEventListener('click', async () => {
     showSpinnerScreen('Waiting for location\u2026');
-    const result = await getGeolocation(60000);
+    const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT);
     if (result.status === 'granted') {
       const lat = result.lat || CONFIG.DEFAULT_LAT;
       const lng = result.lng || CONFIG.DEFAULT_LNG;

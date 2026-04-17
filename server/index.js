@@ -2,6 +2,16 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
 
+const CONSTANTS = {
+  WS_OPEN: 1,
+  WS_TYPE_PING: 'ping',
+  WS_TYPE_PONG: 'pong',
+  WS_TYPE_VIEWPORT: 'viewport',
+  WS_TYPE_PIXEL: 'pixel',
+  WS_TYPE_CHILD: 'child',
+  WS_TYPE_CLEAR_CHILDREN: 'clearChildren'
+};
+
 const PORT = process.env.PORT || 3000;
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
@@ -75,8 +85,8 @@ async function handleRequest(req, res) {
       const pixel = JSON.parse(body);
       await redis.deleteSubpixels(pixel.id);
       await redis.savePixel(pixel);
-      broadcastToViewport(pixel.lat, pixel.lng, { type: 'clearChildren', data: { parentId: pixel.id } });
-      broadcastToViewport(pixel.lat, pixel.lng, { type: 'pixel', data: { ...pixel, hasChildren: false } });
+      broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } });
+      broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -95,7 +105,7 @@ async function handleRequest(req, res) {
 
       const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
 
-      broadcastToViewport(childPixel.lat, childPixel.lng, { type: 'child', data: { parentId, childKey, childPixel, childrenCount: children.length } });
+      broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } });
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
@@ -121,7 +131,7 @@ function inBounds(lat, lng, b) {
 function broadcastToViewport(lat, lng, data) {
   const msg = JSON.stringify(data);
   for (const client of wss.clients) {
-    if (client.readyState === 1 && client.viewport && inBounds(lat, lng, client.viewport)) {
+    if (client.readyState === CONSTANTS.WS_OPEN && client.viewport && inBounds(lat, lng, client.viewport)) {
       client.send(msg);
     }
   }
@@ -130,7 +140,7 @@ function broadcastToViewport(lat, lng, data) {
 function getConnectedCount() {
   let count = 0;
   for (const client of wss.clients) {
-    if (client.readyState === 1) count++;
+    if (client.readyState === CONSTANTS.WS_OPEN) count++;
   }
   return count;
 }
@@ -142,9 +152,9 @@ wss.on('connection', ws => {
   ws.on('message', raw => {
     try {
       const msg = JSON.parse(raw);
-      if (msg.type === 'ping') {
-        ws.send(JSON.stringify({ type: 'pong' }));
-      } else if (msg.type === 'viewport' && msg.bounds) {
+      if (msg.type === CONSTANTS.WS_TYPE_PING) {
+        ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PONG }));
+      } else if (msg.type === CONSTANTS.WS_TYPE_VIEWPORT && msg.bounds) {
         ws.viewport = msg.bounds;
       }
     } catch {}

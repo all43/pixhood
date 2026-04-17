@@ -180,6 +180,10 @@ Permission flow:
 - **`maximumAge: 300000`** on geolocation: allows Chrome to return cached position instantly instead of timing out when the network location provider is slow.
 - **No build step**: prototype stays simple, `node index.js` and open browser.
 
+## Implementation notes
+
+**WebSocket protocol:** Message type strings (`WS_TYPE_PING`, `WS_TYPE_PONG`, `WS_TYPE_VIEWPORT`, `WS_TYPE_PIXEL`, `WS_TYPE_CHILD`, `WS_TYPE_CLEAR_CHILDREN`) are defined separately in `frontend/config.js` (CONFIG) and `server/index.js` (CONSTANTS) since the frontend and server are separate codebases deployed independently. They must remain in sync manually — a typo silently breaks the protocol. When updating a message type, update both locations.
+
 ## Out of scope (prototype)
 
 User accounts, pixel ownership, undo/erase, rate limiting, abuse prevention, social features, mobile app.

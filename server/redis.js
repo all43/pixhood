@@ -9,10 +9,11 @@ async function connect() {
   console.log('Redis connected');
 }
 
-const TTL = 86400;
+const TTL = 86400; // 24 hours
 const GEO_KEY = 'pixels:geo';
 
 const LAT_METERS_PER_DEG = 111320;
+// Matches DEFAULT_LAT in frontend/config.js (52.5200); used for longitude scaling
 const LNG_METERS_PER_DEG = 111320 * Math.cos(52.52 * Math.PI / 180);
 
 function pixelKey(id) {

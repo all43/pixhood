@@ -31,13 +31,13 @@ function initMap(lat, lng) {
     center: [lat, lng],
     zoom: CONFIG.DEFAULT_ZOOM,
     zoomControl: true,
-    maxZoom: 22
+    maxZoom: CONFIG.MAX_ZOOM
   });
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+  L.tileLayer(CONFIG.TILE_URL, {
     attribution: '&copy; <a href="https://carto.com/">CARTO</a>',
-    maxZoom: 22,
-    subdomains: 'abcd'
+    maxZoom: CONFIG.MAX_ZOOM,
+    subdomains: CONFIG.TILE_SUBDOMAINS
   }).addTo(map);
 
   gridLayer = createGridLayer();
@@ -146,7 +146,7 @@ function createSubGridLayer() {
       const latStart = Math.floor(latMin / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
       const lngStart = Math.floor(lngMin / CONFIG.LNG_STEP) * CONFIG.LNG_STEP;
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.strokeStyle = CONFIG.SUB_GRID_COLOR;
       ctx.lineWidth = 1;
 
       for (let parentLat = latStart; parentLat <= latMax + CONFIG.TILE_SIZE; parentLat += CONFIG.TILE_SIZE) {
@@ -173,8 +173,8 @@ function createSubGridLayer() {
         }
       }
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = CONFIG.SUB_GRID_BORDER_COLOR;
+      ctx.lineWidth = CONFIG.SUB_GRID_BORDER_WIDTH;
 
       for (let parentLat = latStart; parentLat <= latMax + CONFIG.TILE_SIZE; parentLat += CONFIG.TILE_SIZE) {
         for (let parentLng = lngStart; parentLng <= lngMax + CONFIG.LNG_STEP; parentLng += CONFIG.LNG_STEP) {
@@ -273,7 +273,7 @@ async function handleLocate() {
   const btn = document.getElementById('locate-btn');
   btn.classList.add('locating');
 
-  const result = await getGeolocation(60000);
+  const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT);
 
   btn.classList.remove('locating');
 
@@ -383,12 +383,12 @@ function renderPixel(pixel) {
   const bounds = tileBounds(id);
 
   if (pixelLayers[id]) {
-    pixelLayers[id].setStyle({ fillColor: color, color: color, fillOpacity: 0.75 });
+    pixelLayers[id].setStyle({ fillColor: color, color: color, fillOpacity: CONFIG.PIXEL_OPACITY });
   } else {
     const rect = L.rectangle([bounds.sw, bounds.ne], {
       color,
       fillColor: color,
-      fillOpacity: 0.75,
+      fillOpacity: CONFIG.PIXEL_OPACITY,
       weight: 0,
       interactive: false
     });
@@ -441,7 +441,7 @@ function renderChildren(parentId, children) {
     const rect = L.rectangle([subBounds.sw, subBounds.ne], {
       color: child.color,
       fillColor: child.color,
-      fillOpacity: 0.85,
+      fillOpacity: CONFIG.CHILD_PIXEL_OPACITY,
       weight: 0,
       interactive: false
     });
@@ -465,7 +465,7 @@ function renderChildPixel(parentId, childKey, subBounds, color) {
     const rect = L.rectangle([subBounds.sw, subBounds.ne], {
       color,
       fillColor: color,
-      fillOpacity: 0.85,
+      fillOpacity: CONFIG.CHILD_PIXEL_OPACITY,
       weight: 0,
       interactive: false
     });
@@ -506,19 +506,19 @@ function updateBoundaryVisualization() {
   }
 
   const isNearEdge =
-    vb.n > lb.n - (lb.n - lb.s) * 0.2 ||
-    vb.s < lb.s + (lb.n - lb.s) * 0.2 ||
-    vb.e > lb.e - (lb.e - lb.w) * 0.2 ||
-    vb.w < lb.w + (lb.e - lb.w) * 0.2;
+    vb.n > lb.n - (lb.n - lb.s) * CONFIG.BOUNDARY_EDGE_FRACTION ||
+    vb.s < lb.s + (lb.n - lb.s) * CONFIG.BOUNDARY_EDGE_FRACTION ||
+    vb.e > lb.e - (lb.e - lb.w) * CONFIG.BOUNDARY_EDGE_FRACTION ||
+    vb.w < lb.w + (lb.e - lb.w) * CONFIG.BOUNDARY_EDGE_FRACTION;
 
   if (isNearEdge) {
     boundaryRect = L.rectangle(
       [[lb.s, lb.w], [lb.n, lb.e]],
       {
-        color: 'rgba(255, 165, 0, 0.4)',
+        color: CONFIG.BOUNDARY_COLOR,
         fillColor: 'transparent',
         weight: 2,
-        dashArray: '8 4',
+        dashArray: CONFIG.BOUNDARY_DASH,
         interactive: false
       }
     );

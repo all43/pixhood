@@ -17,7 +17,7 @@ function needsRefetch(viewportBounds) {
   if (!_loadedBounds) return true;
   const vb = viewportBounds;
   const lb = _loadedBounds;
-  const margin = 0.5;
+  const margin = CONFIG.REFETCH_THRESHOLD;
   return (
     vb.n > lb.n - (lb.n - lb.s) * margin ||
     vb.s < lb.s + (lb.n - lb.s) * margin ||
@@ -111,7 +111,7 @@ function connectWebSocket(onPixel, onChild) {
 function sendViewport(viewportBounds) {
   if (!_ws || _ws.readyState !== 1) return;
   const fb = computeFetchBounds(viewportBounds);
-  _ws.send(JSON.stringify({ type: 'viewport', bounds: fb }));
+  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb }));
 }
 
 let _onViewportReady = null;
@@ -125,15 +125,15 @@ function _openWS() {
 
   _ws.addEventListener('open', () => {
     console.log('WS connected');
-    _retryDelay = 1000;
+    _retryDelay = CONFIG.WS_RETRY_INITIAL_MS;
     _startHeartbeat();
     if (_loadedBounds) {
-      _ws.send(JSON.stringify({ type: 'viewport', bounds: _loadedBounds }));
+      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: _loadedBounds }));
     } else if (_onViewportReady) {
       const bounds = _onViewportReady();
       if (bounds) {
         const fb = computeFetchBounds(bounds);
-        _ws.send(JSON.stringify({ type: 'viewport', bounds: fb }));
+        _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb }));
       }
     }
   });
@@ -141,10 +141,10 @@ function _openWS() {
   _ws.addEventListener('message', e => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'pixel' && _onPixel) _onPixel(msg.data);
-      if (msg.type === 'child' && _onChild) _onChild(msg.data, msg.type);
-      if (msg.type === 'clearChildren' && _onChild) _onChild(msg.data, msg.type);
-      if (msg.type === 'pong') return;
+      if (msg.type === CONFIG.WS_TYPE_PIXEL && _onPixel) _onPixel(msg.data);
+      if (msg.type === CONFIG.WS_TYPE_CHILD && _onChild) _onChild(msg.data, msg.type);
+      if (msg.type === CONFIG.WS_TYPE_CLEAR_CHILDREN && _onChild) _onChild(msg.data, msg.type);
+      if (msg.type === CONFIG.WS_TYPE_PONG) return;
     } catch (err) {
       console.error('WS message parse error:', err);
     }
@@ -154,7 +154,7 @@ function _openWS() {
     console.log(`WS closed — reconnecting in ${_retryDelay}ms`);
     _stopHeartbeat();
     setTimeout(_openWS, _retryDelay);
-    _retryDelay = Math.min(_retryDelay * 2, 30000);
+    _retryDelay = Math.min(_retryDelay * 2, CONFIG.WS_RETRY_MAX_MS);
   });
 
   _ws.addEventListener('error', err => {
@@ -166,7 +166,7 @@ function _startHeartbeat() {
   _stopHeartbeat();
   _heartbeatTimer = setInterval(() => {
     if (_ws && _ws.readyState === 1) {
-      _ws.send(JSON.stringify({ type: 'ping' }));
+      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_PING }));
     }
   }, CONFIG.HEARTBEAT_INTERVAL);
 }

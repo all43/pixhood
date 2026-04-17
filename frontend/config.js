@@ -24,5 +24,48 @@ const CONFIG = {
     '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
     '#FF8800', '#8800FF', '#00FF88', '#FF0088',
     '#884400', '#448800', '#004488', '#888888'
-  ]
+  ],
+
+  // Geolocation timeouts (ms)
+  GEO_FAST_TIMEOUT: 2000,
+  GEO_GRANTED_TIMEOUT: 10000,
+  GEO_RETRY_TIMEOUT: 3000,
+  GEO_DEFAULT_TIMEOUT: 60000,
+
+  // UI timings (ms)
+  TOAST_DURATION: 3000,
+  SLOW_HINT_DELAY: 1500,
+  VIEWPORT_DEBOUNCE_MS: 300,
+  INIT_VIEWPORT_SPAN: 0.01,
+
+  // Map rendering
+  MAX_ZOOM: 22,
+  TILE_URL: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+  TILE_SUBDOMAINS: 'abcd',
+  SUB_GRID_COLOR: 'rgba(255,255,255,0.04)',
+  SUB_GRID_BORDER_COLOR: 'rgba(255,255,255,0.2)',
+  SUB_GRID_BORDER_WIDTH: 2,
+  PIXEL_OPACITY: 0.75,
+  CHILD_PIXEL_OPACITY: 0.85,
+  BOUNDARY_EDGE_FRACTION: 0.2,
+  BOUNDARY_COLOR: 'rgba(255, 165, 0, 0.4)',
+  BOUNDARY_DASH: '8 4',
+
+  // WebSocket protocol (must match server/index.js CONSTANTS)
+  WS_TYPE_PING: 'ping',
+  WS_TYPE_PONG: 'pong',
+  WS_TYPE_VIEWPORT: 'viewport',
+  WS_TYPE_PIXEL: 'pixel',
+  WS_TYPE_CHILD: 'child',
+  WS_TYPE_CLEAR_CHILDREN: 'clearChildren',
+
+  // WebSocket reconnect (ms)
+  WS_RETRY_INITIAL_MS: 1000,
+  WS_RETRY_MAX_MS: 30000,
+
+  // Refetch trigger
+  REFETCH_THRESHOLD: 0.5,
+
+  // Default color
+  DEFAULT_COLOR: '#FF0000'
 };
