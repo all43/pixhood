@@ -414,8 +414,17 @@ async function init() {
     } catch {
     }
 
-    if (permState === 'prompt') {
-      localStorage.removeItem('geo_pref');
+    // geo_pref='granted' means the user said yes at least once. We only short-circuit
+    // on explicit 'denied' — where calling getCurrentPosition would definitely fail.
+    // 'prompt' doesn't mean the user changed their mind: it could be an expired
+    // Safari day-grant or an iOS WebKit bug where the API always returns 'prompt'
+    // regardless of the actual system permission. In either case getCurrentPosition
+    // handles it correctly: returns silently if still granted, or shows the native
+    // dialog again. No reason to clear geo_pref or show our welcome screen.
+    if (permState === 'denied') {
+      localStorage.setItem('geo_pref', 'denied');
+      await proceedToMap({ status: 'denied' }, geoPromise);
+      return;
     } else {
       showSpinnerScreen('Waiting for location\u2026');
       const result = await getGeolocation(CONFIG.GEO_GRANTED_TIMEOUT);
