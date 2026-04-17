@@ -479,7 +479,18 @@ function initPWAInstallPrompt(map) {
   let promptShownThisSession = false;
   let deferredInstallEvent = null;
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  // All iOS browsers share the same Share › Add to Home Screen flow (iOS 16.4+), so no need to filter to Safari-only.
+  const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  // macOS Safari 17+ (Sonoma+) supports File › Add to Dock; Chromium on macOS uses beforeinstallprompt instead.
+  const isMacSafari = /Macintosh/.test(navigator.userAgent) &&
+    /Safari\//.test(navigator.userAgent) &&
+    !/Chrome|Chromium|Edg\/|OPR\//.test(navigator.userAgent);
+
+  const MSG_INSTALL_NATIVE = 'Install Pixhood for faster launch and fullscreen mode.';
+  const MSG_INSTALL_IOS    = 'On iOS: tap Share, then "Add to Home Screen"';
+  const MSG_INSTALL_MAC    = 'On Mac: in Safari, File › Add to Dock';
+  const MSG_HOW_IOS        = 'Tap the Share ↑ button, then "Add to Home Screen"';
+  const MSG_HOW_MAC        = 'In Safari: File › Add to Dock, or use the Share button';
 
   function cleanupSession() {
     if (initialTimer) {
@@ -527,7 +538,7 @@ function initPWAInstallPrompt(map) {
       return;
     }
 
-    if (!deferredInstallEvent && !isIOS) {
+    if (!deferredInstallEvent && !isIOSDevice && !isMacSafari) {
       return;
     }
 
@@ -537,22 +548,14 @@ function initPWAInstallPrompt(map) {
     }
 
     detachInactivityListeners();
-
     promptShownThisSession = true;
-    const message = deferredInstallEvent
-      ? 'Install Pixhood for faster launch and fullscreen mode.'
-      : 'Install Pixhood: Share > Add to Home Screen';
 
-    showActionToast(
-      message,
-      deferredInstallEvent ? 'Install' : 'How',
-      async () => {
-        if (!deferredInstallEvent) {
-          showToast('On iOS: tap Share, then Add to Home Screen');
-          cleanupSession();
-          return;
-        }
+    let message, actionLabel, onAction;
 
+    if (deferredInstallEvent) {
+      message = MSG_INSTALL_NATIVE;
+      actionLabel = 'Install';
+      onAction = async () => {
         const promptEvent = deferredInstallEvent;
         deferredInstallEvent = null;
 
@@ -575,13 +578,21 @@ function initPWAInstallPrompt(map) {
         }
 
         cleanupSession();
-      },
-      'Later',
-      () => {
-        registerDismiss();
-        cleanupSession();
-      }
-    );
+      };
+    } else if (isIOSDevice) {
+      message = MSG_INSTALL_IOS;
+      actionLabel = 'How';
+      onAction = async () => { showToast(MSG_HOW_IOS); cleanupSession(); };
+    } else {
+      message = MSG_INSTALL_MAC;
+      actionLabel = 'How';
+      onAction = async () => { showToast(MSG_HOW_MAC); cleanupSession(); };
+    }
+
+    showActionToast(message, actionLabel, onAction, 'Later', () => {
+      registerDismiss();
+      cleanupSession();
+    });
   }
 
   function onInactivity() {
