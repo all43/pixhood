@@ -20,6 +20,7 @@ function selectColor(color) {
 
 function initColorPicker() {
   const palette = document.getElementById('palette');
+  palette.textContent = '';
   CONFIG.PALETTE.forEach(color => {
     const swatch = document.createElement('div');
     swatch.className = 'swatch';
@@ -29,7 +30,11 @@ function initColorPicker() {
     swatch.addEventListener('click', () => selectColor(color));
     palette.appendChild(swatch);
   });
-  selectColor(CONFIG.DEFAULT_COLOR);
+
+  if (!CONFIG.PALETTE.includes(selectedColor)) {
+    selectedColor = CONFIG.DEFAULT_COLOR;
+  }
+  selectColor(selectedColor);
 }
 
 function showToast(msg) {

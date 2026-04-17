@@ -481,15 +481,36 @@ html, body {
 @media (max-width: 480px) {
   #topbar {
     padding: 6px 10px;
+    flex-wrap: wrap;
   }
   #logo {
     font-size: 15px;
     letter-spacing: 2px;
   }
-  .swatch {
-    width: 22px;
-    height: 22px;
+  #palette {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(22px, 1fr));
+    justify-items: center;
+    justify-content: end;
+    width: 100%;
+    max-width: none;
+    gap: 5px;
   }
+  .swatch {
+    width: 100%;
+    max-width: 30px;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+  /* Reverse only the second row (items 9-16) on mobile. */
+  #palette .swatch:nth-child(16) { order: 9; }
+  #palette .swatch:nth-child(15) { order: 10; }
+  #palette .swatch:nth-child(14) { order: 11; }
+  #palette .swatch:nth-child(13) { order: 12; }
+  #palette .swatch:nth-child(12) { order: 13; }
+  #palette .swatch:nth-child(11) { order: 14; }
+  #palette .swatch:nth-child(10) { order: 15; }
+  #palette .swatch:nth-child(9) { order: 16; }
   #locate-btn {
     bottom: 100px;
     width: 32px;
