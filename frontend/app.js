@@ -475,11 +475,19 @@ async function init() {
   });
 }
 
-function initPWAInstallPrompt(map) {
+async function initPWAInstallPrompt(map) {
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   if (isStandalone || !('serviceWorker' in navigator)) return;
 
   localStorage.removeItem('pwaPrompted');
+
+  if (navigator.getInstalledRelatedApps) {
+    const apps = await navigator.getInstalledRelatedApps();
+    if (apps.some(a => a.platform === 'webapp')) {
+      const s = readPWAState(); s.installed = true; writePWAState(s);
+      return;
+    }
+  }
 
   let pwaState = readPWAState();
   if (pwaState.installed) return;
