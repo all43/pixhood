@@ -2,27 +2,39 @@ const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
 
-const svgPath = path.join(__dirname, '..', 'favicon.svg');
+const logoPath = path.join(__dirname, '..', 'icons', 'logo.svg');
 const publicDir = path.join(__dirname, '..', 'public');
 
+const outputs = [
+  { file: 'icon-192.png', size: 192, transparent: false },
+  { file: 'icon-512.png', size: 512, transparent: false },
+  { file: 'icon-192-transparent.png', size: 192, transparent: true },
+  { file: 'icon-512-transparent.png', size: 512, transparent: true },
+];
+
+const BG = { r: 26, g: 26, b: 46 };
+
 async function generateIcons() {
-  const svg = fs.readFileSync(svgPath);
+  const srcMtime = fs.statSync(logoPath).mtimeMs;
+  const needsRegen = outputs.some(({ file }) => {
+    const dest = path.join(publicDir, file);
+    return !fs.existsSync(dest) || fs.statSync(dest).mtimeMs < srcMtime;
+  });
 
-  // Generate 192x192
-  await sharp(svg)
-    .resize(192, 192)
-    .png()
-    .toFile(path.join(publicDir, 'icon-192.png'));
+  if (!needsRegen) {
+    console.log('Icons up to date, skipping.');
+    return;
+  }
 
-  console.log('Created icon-192.png');
+  const svg = fs.readFileSync(logoPath);
 
-  // Generate 512x512
-  await sharp(svg)
-    .resize(512, 512)
-    .png()
-    .toFile(path.join(publicDir, 'icon-512.png'));
+  for (const { file, size, transparent } of outputs) {
+    let pipeline = sharp(svg).resize(size, size);
+    if (!transparent) pipeline = pipeline.flatten({ background: BG });
+    await pipeline.png().toFile(path.join(publicDir, file));
+    console.log(`Created ${file}`);
+  }
 
-  console.log('Created icon-512.png');
   console.log('Icons generated successfully!');
 }
 
