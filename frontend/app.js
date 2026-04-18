@@ -225,6 +225,14 @@ async function getGeolocation(timeout) {
     return fastCached;
   }
 
+  // Use stored position before attempting the slow fresh request.
+  // Avoids waiting up to 10s when Chrome's location provider is unresponsive.
+  const storedFreshEnough = storedGeo && (Date.now() - storedGeo.savedAt) < GEO_MAX_AGE_MS;
+  if (storedFreshEnough) {
+    console.info('[geo] using last known stored position (fallback)');
+    return { status: 'granted', lat: storedGeo.lat, lng: storedGeo.lng };
+  }
+
   const requestedTimeout = timeout ?? CONFIG.GEO_DEFAULT_TIMEOUT;
   const mainTimeout = permState === 'granted'
     ? Math.min(requestedTimeout, CONFIG.GEO_GRANTED_TIMEOUT)
@@ -234,26 +242,6 @@ async function getGeolocation(timeout) {
     enableHighAccuracy: false,
     maximumAge: 0
   });
-  if (fresh.status === 'granted' || fresh.status === 'denied') {
-    return fresh;
-  }
-
-  const storedFreshEnough = storedGeo && (Date.now() - storedGeo.savedAt) < GEO_MAX_AGE_MS;
-  if (storedFreshEnough && fresh.status !== 'denied') {
-    console.info('[geo] using last known stored position (fallback)');
-    return { status: 'granted', lat: storedGeo.lat, lng: storedGeo.lng };
-  }
-
-  // Final short cached retry for transient Chrome provider failures.
-  const retryCached = await requestPosition({
-    timeout: CONFIG.GEO_RETRY_TIMEOUT,
-    enableHighAccuracy: false,
-    maximumAge: GEO_MAX_AGE_MS
-  });
-  if (retryCached.status === 'granted') {
-    return retryCached;
-  }
-
   return fresh;
 
 }
