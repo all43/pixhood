@@ -599,6 +599,7 @@ async function initPWAInstallPrompt(map) {
       onAction = async () => { showToast(MSG_HOW_MAC); cleanupSession(); };
     }
 
+    hideLocationBanner();
     showActionToast(message, actionLabel, onAction, 'Later', () => {
       registerDismiss();
       cleanupSession();
