@@ -130,7 +130,7 @@ function isViewportPlausible(bounds, zoom) {
   if (!zoom || zoom < 1 || zoom > 22) return true;
   const latSpan = Math.abs(bounds.n - bounds.s);
   const lngSpan = Math.abs(bounds.e - bounds.w);
-  const maxSpan = 360 / Math.pow(2, zoom - 3);
+  const maxSpan = 360 / Math.pow(2, zoom - 6);
   if (latSpan > maxSpan || lngSpan > maxSpan) return false;
   return true;
 }
