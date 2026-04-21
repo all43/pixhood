@@ -148,7 +148,8 @@ function countRecentFlags(sessionId, windowMs) {
   const state = sessionStates.get(sessionId);
   if (!state) return 0;
   const cutoff = Date.now() - windowMs;
-  return state.flags.filter(f => f.time >= cutoff).length;
+  state.flags = state.flags.filter(f => f.time >= cutoff);
+  return state.flags.length;
 }
 
 function checkAdminAuth(req) {
@@ -632,11 +633,24 @@ wss.on('connection', (ws, req) => {
 
   ws.on('error', err => console.error('WS client error:', err));
   ws.on('close', () => {
+    if (ws.sessionId) sessionStates.delete(ws.sessionId);
     console.log(`WS client disconnected (${getConnectedCount()} total)`);
   });
 });
 
 redis.connect().then(() => {
+  setInterval(() => {
+    const cutoff = Date.now() - 3600000;
+    let pruned = 0;
+    for (const [sessionId, state] of sessionStates) {
+      if (state.lastPaintTime && state.lastPaintTime < cutoff) {
+        sessionStates.delete(sessionId);
+        pruned++;
+      }
+    }
+    if (pruned) console.log(`[gc] pruned ${pruned} stale session states`);
+  }, 3600000);
+
   server.listen(PORT, () => {
     console.log(`Pixhood running at http://localhost:${PORT}`);
   });

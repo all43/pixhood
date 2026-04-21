@@ -61,10 +61,14 @@ pixhood/
 │   ├── scripts/       # Build utilities
 │   │   └── generate-icons.js
 │   └── dist/          # Build output (gitignored)
+├── shared/             # Shared constants between frontend and server
+│   └── ws-types.js     # Single source of truth for WS message type strings
 ├── server/            # Backend API (Fly.io)
 │   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
 │   ├── redis.js       # Redis client, geo-indexed queries, TTL management
-│   └── package.json
+│   ├── Dockerfile     # Copies shared/ via predeploy script
+│   ├── .gitignore     # Excludes copied shared/
+│   └── package.json   # predeploy + deploy scripts
 ├── CLAUDE.md          # This file
 └── README.md          # User-facing docs
 ```
@@ -140,6 +144,7 @@ No user accounts — sessions are anonymous UUIDs in `localStorage`.
 | `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with previous state for revert |
 | `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (INCR + EXPIRE) |
 | `flagged_sessions` | Set | — | Session IDs flagged for suspicious activity |
+| `blocked:<sessionId>` | String | 1h | Blocked session (auto-revert triggered) |
 
 Stale geo entries (pixel key expired) cleaned lazily on each viewport query.
 
@@ -159,7 +164,7 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` �
 
 ### WebSocket protocol
 
-Connection: `wss://api.pixhood.art` (max 5 concurrent connections per IP).
+Connection: `wss://api.pixhood.art` (max 10 concurrent connections per IP).
 
 **Server → Client:**
 - `{ type: "pixel", data }` — pixel painted (viewport-scoped broadcast)
@@ -206,7 +211,7 @@ Permission flow:
 
 ## Implementation notes
 
-**WebSocket protocol:** Message type strings (`WS_TYPE_PING`, `WS_TYPE_PONG`, `WS_TYPE_VIEWPORT`, `WS_TYPE_PIXEL`, `WS_TYPE_CHILD`, `WS_TYPE_CLEAR_CHILDREN`, `WS_TYPE_DELETE_PIXEL`, `WS_TYPE_PAINT_PARENT`, `WS_TYPE_PAINT_CHILD`, `WS_TYPE_PAINT_ACK`, `WS_TYPE_PAINT_ERROR`, `WS_TYPE_BLOCKED`) are defined separately in `frontend/config.js` (CONFIG) and `server/index.js` (CONSTANTS) since the frontend and server are separate codebases deployed independently. They must remain in sync manually — a typo silently breaks the protocol. When updating a message type, update both locations.
+**WebSocket protocol:** Message type strings (`WS_TYPE_PING`, `WS_TYPE_PONG`, `WS_TYPE_VIEWPORT`, `WS_TYPE_PIXEL`, `WS_TYPE_CHILD`, `WS_TYPE_CLEAR_CHILDREN`, `WS_TYPE_DELETE_PIXEL`, `WS_TYPE_PAINT_PARENT`, `WS_TYPE_PAINT_CHILD`, `WS_TYPE_PAINT_ACK`, `WS_TYPE_PAINT_ERROR`, `WS_TYPE_BLOCKED`) are defined in `shared/ws-types.js` as the single source of truth. The server requires it via `./shared/ws-types` (copied by predeploy script). The frontend `config.js` wraps them in `CONFIG`. Frontend `build.js` validates sync at build time — fails if types drift.
 
 ## Rate limiting and abuse prevention
 
@@ -227,11 +232,11 @@ Rate-limited paints get a `paintError` WS message with `reason: "rate_limited"` 
 
 ### Suspicion detection
 
-Two heuristic checks run on every paint (non-blocking — flags but doesn't reject):
+Three heuristic checks run on every paint (non-blocking — flags but doesn't reject):
 
 1. **Viewport check**: paint coordinates must fall within the session's last reported WS viewport ± 2× viewport span margin
 2. **Distance check**: consecutive paints from the same session must not exceed 500m/s speed (Haversine distance / time between paints)
-3. **Viewport plausibility**: viewport span must be consistent with the reported zoom level (max span = `360 / 2^(zoom-3)`). An implausibly large viewport suggests spoofed bounds.
+3. **Viewport plausibility**: viewport span must be consistent with the reported zoom level (max span = `360 / 2^(zoom-6)`). An implausibly large viewport suggests spoofed bounds.
 
 Flagged sessions are stored in `flagged_sessions` Redis set and logged server-side with `[suspicion]` prefix.
 
@@ -253,7 +258,7 @@ Blocked sessions have their paints reverted and receive `{ type: "blocked" }` WS
 
 ### IP connection limit
 
-Max 5 concurrent WS connections per IP (in-memory tracking). Legitimate multi-user households/cafes are fine; bot connection flooding is blocked.
+Max 10 concurrent WS connections per IP (tracked via `wss.clients` iteration per connection). Legitimate multi-user households/cafes are fine; bot connection flooding is blocked.
 
 ### Admin auth
 
