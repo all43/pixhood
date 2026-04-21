@@ -46,9 +46,9 @@ Pixels are stored as individual keys with 24h TTL for natural expiry. A sorted s
 
 Handles Safari one-time grants (permission state `"prompt"` after expiry), Chrome network-location timeouts (`maximumAge: 300000` for cached position fallback), and tab-background throttling. Uses `navigator.permissions.query()` to short-circuit denied state without triggering unnecessary system dialogs.
 
-### Zero-build frontend
+### Installable PWA
 
-No framework, no bundler, no build step. Vanilla JS with Leaflet.js (CDN). Script load order is the only dependency chain. Deploys as static files to Cloudflare Pages.
+Ships as a Progressive Web App — add to home screen for a fullscreen experience with its own icon. Vanilla JS with Leaflet.js (CDN), no framework. A lightweight build script hashes assets and generates the service worker manifest; no bundler needed.
 
 ---
 
@@ -56,7 +56,7 @@ No framework, no bundler, no build step. Vanilla JS with Leaflet.js (CDN). Scrip
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Vanilla JS, Leaflet.js, native WebSocket |
+| Frontend | Vanilla JS, Leaflet.js, native WebSocket, PWA |
 | Backend | Node.js, [`ws`](https://github.com/websockets/ws) |
 | Storage | Redis (individual keys with TTL, GEOADD/GEOSEARCH, Hash for sub-pixels) |
 | Hosting | Cloudflare Pages (frontend), Fly.io (backend), managed Redis |
@@ -174,11 +174,7 @@ cd server && fly deploy
 # Frontend
 cd frontend
 npm install
-npm run build
-wrangler pages deploy dist/ --project-name=pixhood
-
-# Or use wrangler.toml (auto-runs build):
-wrangler pages deploy .
+npm run deploy
 ```
 
 ---
