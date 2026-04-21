@@ -198,6 +198,7 @@ document.addEventListener('visibilitychange', () => {
   } else {
     if (!_ws || _ws.readyState !== 1) _openWS();
     else _startHeartbeat();
+    if (typeof refreshViewport === 'function') refreshViewport();
   }
 });
 
