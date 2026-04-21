@@ -165,7 +165,7 @@ html, body {
 /* ── Locate button ── */
 #locate-btn {
   position: absolute;
-  right: 12px;
+  right: max(12px, env(safe-area-inset-right));
   bottom: 120px;
   z-index: 1001;
   width: 36px;
@@ -480,11 +480,19 @@ html, body {
   border-color: rgba(255,255,255,0.5);
 }
 
+/* ── Safe area insets ── */
+.leaflet-bottom.leaflet-right {
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+#topbar {
+  padding-left: max(10px, env(safe-area-inset-left));
+  padding-right: max(10px, env(safe-area-inset-right));
+}
+
+
 /* ── Mobile adjustments ── */
 @media (max-width: 480px) {
-  #topbar {
-    padding: 6px 10px;
-  }
   #logo {
     font-size: 15px;
     letter-spacing: 2px;
