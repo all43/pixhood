@@ -56,6 +56,10 @@ function onZoomChange() {
   updateGridVisibility();
   updateSubGridVisibility();
   updateChildrenVisibility();
+  const mapEl = document.getElementById('map');
+  if (mapEl) {
+    mapEl.classList.toggle('no-paint', map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD);
+  }
 }
 
 function getViewportBounds() {

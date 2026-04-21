@@ -95,6 +95,10 @@ html, body {
   cursor: crosshair;
 }
 
+#map.no-paint {
+  cursor: grab;
+}
+
 /* ── Pixel-art position pin ── */
 .pixel-pin-wrapper {
   background: none !important;
