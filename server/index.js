@@ -1,7 +1,7 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
-const WS_TYPES = require('../shared/ws-types');
+const WS_TYPES = require('./shared/ws-types');
 
 const CONSTANTS = {
   WS_OPEN: 1,

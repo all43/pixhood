@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "predeploy": "mkdir -p shared && cp -r ../shared/ws-types.js shared/",
+    "deploy": "fly deploy --remote-only"
   },
   "dependencies": {
     "redis": "^4.6.13",
