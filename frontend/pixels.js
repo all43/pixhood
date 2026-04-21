@@ -92,6 +92,7 @@ let _retryDelay = 1000;
 let _heartbeatTimer = null;
 let _paintSeq = 0;
 const _pendingPaints = new Map();
+let _reconnectTimer = null;
 
 function nextPaintId() { return ++_paintSeq; }
 
@@ -181,7 +182,7 @@ function _openWS() {
     console.log(`WS closed — reconnecting in ${_retryDelay}ms`);
     _stopHeartbeat();
     _flushPending();
-    setTimeout(_openWS, _retryDelay);
+    _reconnectTimer = setTimeout(_openWS, _retryDelay);
     _retryDelay = Math.min(_retryDelay * 2, CONFIG.WS_RETRY_MAX_MS);
   });
 
@@ -189,6 +190,16 @@ function _openWS() {
     console.error('WS error:', err);
   });
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    _stopHeartbeat();
+  } else {
+    if (!_ws || _ws.readyState !== 1) _openWS();
+    else _startHeartbeat();
+  }
+});
 
 function _startHeartbeat() {
   _stopHeartbeat();
