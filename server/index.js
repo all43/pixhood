@@ -28,10 +28,9 @@ const AUTO_REVERT = {
   FLAG_WINDOW_MS: 600000
 };
 
-const MAX_WS_PER_IP = 5;
+const MAX_WS_PER_IP = 10;
 
 const sessionStates = new Map();
-const ipConnections = new Map();
 
 function setCORS(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
@@ -579,19 +578,12 @@ function getConnectedCount() {
   return count;
 }
 
-function incrementIP(ip) {
-  const count = (ipConnections.get(ip) || 0) + 1;
-  ipConnections.set(ip, count);
-  return count;
-}
-
-function decrementIP(ip) {
-  const count = (ipConnections.get(ip) || 1) - 1;
-  if (count <= 0) {
-    ipConnections.delete(ip);
-  } else {
-    ipConnections.set(ip, count);
+function countIPConnections(ip) {
+  let count = 0;
+  for (const client of wss.clients) {
+    if (client._clientIP === ip && client.readyState === CONSTANTS.WS_OPEN) count++;
   }
+  return count;
 }
 
 wss.on('connection', (ws, req) => {
@@ -600,15 +592,14 @@ wss.on('connection', (ws, req) => {
   ws.viewport = null;
   ws.sessionId = null;
 
-  const currentCount = incrementIP(ip);
-  if (currentCount > MAX_WS_PER_IP) {
+  const currentCount = countIPConnections(ip);
+  if (currentCount >= MAX_WS_PER_IP) {
     console.warn(`[ip-limit] rejecting connection from ${ip} (${currentCount} active)`);
-    decrementIP(ip);
     ws.close(1008, 'Too many connections');
     return;
   }
 
-  console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount})`);
+  console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount + 1})`);
 
   ws.on('message', raw => {
     try {
@@ -641,7 +632,6 @@ wss.on('connection', (ws, req) => {
 
   ws.on('error', err => console.error('WS client error:', err));
   ws.on('close', () => {
-    decrementIP(ip);
     console.log(`WS client disconnected (${getConnectedCount()} total)`);
   });
 });
