@@ -6,11 +6,12 @@
     "dev": "serve -l 3000",
     "build": "node build.js",
     "preview": "serve -l 3000 dist",
-    "deploy": "npm run build && wrangler pages deploy",
+    "deploy": "npm run build && npx wrangler pages deploy",
     "generate-icons": "node scripts/generate-icons.js"
   },
   "devDependencies": {
     "serve": "^14.0.0",
-    "sharp": "^0.33.0"
+    "sharp": "^0.33.0",
+    "wrangler": "^4.8.0"
   }
 }
