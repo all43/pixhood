@@ -6,6 +6,7 @@
     "dev": "serve -l 3000",
     "build": "node build.js",
     "preview": "serve -l 3000 dist",
+    "deploy": "npm run build && wrangler pages deploy",
     "generate-icons": "node scripts/generate-icons.js"
   },
   "devDependencies": {
