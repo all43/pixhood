@@ -30,9 +30,9 @@
 
 ## Technical highlights
 
-### Mercator-corrected grid
+### Web Mercator grid
 
-Longitude converges toward the poles — at Berlin (52.52°N), `0.0001°` lat ≈ 11.1m but `0.0001°` lng ≈ 6.7m. Longitude step is cosine-corrected: `LNG_STEP = TILE_SIZE / cos(lat)` keeps tiles square without per-row stepping artifacts.
+Tiles are defined in Web Mercator space — always square on screen at every latitude, not just Berlin. The grid uses `TILE_SIZE_M = 18.4m` in Mercator coordinates, with direct pixel-math rendering (no per-tile projection calls).
 
 ### Viewport-scoped real-time broadcasts
 
@@ -91,15 +91,14 @@ npm run dev
 
 ### Grid
 
-The world is divided into a fixed grid of ~10×10m tiles. Each tile holds one color — last painter wins.
+The world is divided into a fixed grid of tiles in Web Mercator space. Each tile holds one color — last painter wins.
 
 ```
-TILE_SIZE = 0.0001                          (~11.1m in latitude)
-LNG_STEP  = 0.0001 / cos(52.52°)           (~11.1m in longitude at Berlin)
+TILE_SIZE_M = 18.4  (Mercator meters — ~11.1m ground distance at Berlin)
 ```
 
 ```js
-tileKey = `${Math.floor(lat / TILE_SIZE)}_${Math.floor(lng / LNG_STEP)}`
+tileKey = `${Math.floor(lngToX(lng) / TILE_SIZE_M)}_${Math.floor(latToY(lat) / TILE_SIZE_M)}`
 ```
 
 ### Sub-grid (zoom ≥ 21)
@@ -133,7 +132,7 @@ pixhood/
 ├── frontend/          # Static frontend (Cloudflare Pages)
 │   ├── index.html     # Entry point, loads Leaflet CDN + app scripts
 │   ├── style.css
-│   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE, SUB_GRID_SIZE, palette
+│   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE_M, Mercator projection, palette
 │   ├── grid.js        # Tile + sub-tile key computation, snapToTile(), snapToSubTile()
 │   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
 │   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
@@ -181,7 +180,6 @@ npm run deploy
 
 ## Limitations & future work
 
-- **Berlin-optimized grid** — `LNG_STEP` calibrated for Berlin's latitude; tiles slightly non-square elsewhere
 - **Single machine** — WebSocket state is in-memory; scaling requires Redis pub/sub between machines
 - **No rate limiting** — a single client can spam paints
 - **No accounts** — anonymous sessions only, no pixel ownership

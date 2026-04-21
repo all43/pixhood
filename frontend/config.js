@@ -5,8 +5,14 @@ const CONFIG = {
   API_URL: _backendHost,
   WS_URL: _local ? 'ws://localhost:3000' : 'wss://api.pixhood.art',
 
-  TILE_SIZE: 0.0001,
-  LNG_STEP: 0.0001 / Math.cos(52.5200 * Math.PI / 180),
+  TILE_SIZE_M: 18.4,
+
+  R: 20037508.34,
+
+  lngToX(lng) { return lng * CONFIG.R / 180; },
+  latToY(lat) { return Math.log(Math.tan((90 + lat) * Math.PI / 360)) * CONFIG.R / Math.PI; },
+  xToLng(x) { return x * 180 / CONFIG.R; },
+  yToLat(y) { return Math.atan(Math.exp(y * Math.PI / CONFIG.R)) * 360 / Math.PI - 90; },
   DEFAULT_LAT: 52.5200,
   DEFAULT_LNG:  13.4050,
   DEFAULT_ZOOM: 17,

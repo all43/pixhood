@@ -79,35 +79,29 @@ function createGridLayer() {
       if (map.getZoom() >= CONFIG.SUB_GRID_ZOOM) return tile;
 
       const ctx = tile.getContext('2d');
-      const nw = map.unproject([coords.x * tileSize.x, coords.y * tileSize.y], coords.z);
-      const se = map.unproject([(coords.x + 1) * tileSize.x, (coords.y + 1) * tileSize.y], coords.z);
-
-      const latMin = se.lat;
-      const latMax = nw.lat;
-      const lngMin = nw.lng;
-      const lngMax = se.lng;
-
       ctx.strokeStyle = CONFIG.GRID_COLOR;
       ctx.lineWidth = 1;
 
-      const latStart = Math.floor(latMin / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-      const lngStart = Math.floor(lngMin / CONFIG.LNG_STEP) * CONFIG.LNG_STEP;
-      const latCenter = (latMin + latMax) / 2;
-      const lngCenter = (lngMin + lngMax) / 2;
+      const worldSize = 256 * Math.pow(2, coords.z);
+      const spacing = CONFIG.TILE_SIZE_M * worldSize / (2 * CONFIG.R);
+      const halfWorld = worldSize / 2;
 
-      for (let lat = latStart; lat <= latMax; lat += CONFIG.TILE_SIZE) {
-        const y = map.project([lat, lngCenter], coords.z).y - coords.y * tileSize.y;
+      const startX = ((halfWorld - coords.x * tileSize.x) % spacing + spacing) % spacing;
+      const startY = ((halfWorld - coords.y * tileSize.y) % spacing + spacing) % spacing;
+
+      for (let x = startX; x <= tileSize.x; x += spacing) {
+        const px = Math.round(x) + 0.5;
         ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(tileSize.x, y);
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, tileSize.y);
         ctx.stroke();
       }
 
-      for (let lng = lngStart; lng <= lngMax; lng += CONFIG.LNG_STEP) {
-        const x = map.project([latCenter, lng], coords.z).x - coords.x * tileSize.x;
+      for (let y = startY; y <= tileSize.y; y += spacing) {
+        const py = Math.round(y) + 0.5;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, tileSize.y);
+        ctx.moveTo(0, py);
+        ctx.lineTo(tileSize.x, py);
         ctx.stroke();
       }
 
@@ -129,63 +123,53 @@ function createSubGridLayer() {
       if (map.getZoom() < CONFIG.SUB_GRID_ZOOM) return tile;
 
       const ctx = tile.getContext('2d');
-      const nw = map.unproject([coords.x * tileSize.x, coords.y * tileSize.y], coords.z);
-      const se = map.unproject([(coords.x + 1) * tileSize.x, (coords.y + 1) * tileSize.y], coords.z);
+      const worldSize = 256 * Math.pow(2, coords.z);
+      const parentSpacing = CONFIG.TILE_SIZE_M * worldSize / (2 * CONFIG.R);
+      const subSpacing = parentSpacing / CONFIG.SUB_GRID_SIZE;
+      const halfWorld = worldSize / 2;
 
-      const latMin = se.lat;
-      const latMax = nw.lat;
-      const lngMin = nw.lng;
-      const lngMax = se.lng;
-
-      const tileSnap = snapToTile((latMin + latMax) / 2, (lngMin + lngMax) / 2);
-      const parentLatSpan = CONFIG.TILE_SIZE;
-      const parentLngSpan = CONFIG.LNG_STEP;
-      const subLatStep = parentLatSpan / CONFIG.SUB_GRID_SIZE;
-      const subLngStep = parentLngSpan / CONFIG.SUB_GRID_SIZE;
-
-      const latStart = Math.floor(latMin / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-      const lngStart = Math.floor(lngMin / CONFIG.LNG_STEP) * CONFIG.LNG_STEP;
+      const subStartX = ((halfWorld - coords.x * tileSize.x) % subSpacing + subSpacing) % subSpacing;
+      const subStartY = ((halfWorld - coords.y * tileSize.y) % subSpacing + subSpacing) % subSpacing;
 
       ctx.strokeStyle = CONFIG.SUB_GRID_COLOR;
       ctx.lineWidth = 1;
 
-      for (let parentLat = latStart; parentLat <= latMax + CONFIG.TILE_SIZE; parentLat += CONFIG.TILE_SIZE) {
-        for (let parentLng = lngStart; parentLng <= lngMax + CONFIG.LNG_STEP; parentLng += CONFIG.LNG_STEP) {
-          for (let i = 0; i <= CONFIG.SUB_GRID_SIZE; i++) {
-            const lat = parentLat + i * subLatStep;
-            if (lat < latMin - subLatStep || lat > latMax + subLatStep) continue;
-            const y = map.project([lat, parentLng + subLngStep / 2], coords.z).y - coords.y * tileSize.y;
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(tileSize.x, y);
-            ctx.stroke();
-          }
+      for (let x = subStartX; x <= tileSize.x; x += subSpacing) {
+        const px = Math.round(x) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, tileSize.y);
+        ctx.stroke();
+      }
 
-          for (let i = 0; i <= CONFIG.SUB_GRID_SIZE; i++) {
-            const lng = parentLng + i * subLngStep;
-            if (lng < lngMin - subLngStep || lng > lngMax + subLngStep) continue;
-            const x = map.project([parentLat + subLatStep / 2, lng], coords.z).x - coords.x * tileSize.x;
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, tileSize.y);
-            ctx.stroke();
-          }
-        }
+      for (let y = subStartY; y <= tileSize.y; y += subSpacing) {
+        const py = Math.round(y) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, py);
+        ctx.lineTo(tileSize.x, py);
+        ctx.stroke();
       }
 
       ctx.strokeStyle = CONFIG.SUB_GRID_BORDER_COLOR;
       ctx.lineWidth = CONFIG.SUB_GRID_BORDER_WIDTH;
 
-      for (let parentLat = latStart; parentLat <= latMax + CONFIG.TILE_SIZE; parentLat += CONFIG.TILE_SIZE) {
-        for (let parentLng = lngStart; parentLng <= lngMax + CONFIG.LNG_STEP; parentLng += CONFIG.LNG_STEP) {
-          const sw = map.project([parentLat, parentLng], coords.z);
-          const ne = map.project([parentLat + parentLatSpan, parentLng + parentLngSpan], coords.z);
-          const rx = sw.x - coords.x * tileSize.x;
-          const ry = sw.y - coords.y * tileSize.y;
-          const rw = ne.x - sw.x;
-          const rh = ne.y - sw.y;
-          ctx.strokeRect(rx, ry, rw, rh);
-        }
+      const parentStartX = ((halfWorld - coords.x * tileSize.x) % parentSpacing + parentSpacing) % parentSpacing;
+      const parentStartY = ((halfWorld - coords.y * tileSize.y) % parentSpacing + parentSpacing) % parentSpacing;
+
+      for (let x = parentStartX; x <= tileSize.x; x += parentSpacing) {
+        const px = Math.round(x) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, tileSize.y);
+        ctx.stroke();
+      }
+
+      for (let y = parentStartY; y <= tileSize.y; y += parentSpacing) {
+        const py = Math.round(y) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(0, py);
+        ctx.lineTo(tileSize.x, py);
+        ctx.stroke();
       }
 
       return tile;

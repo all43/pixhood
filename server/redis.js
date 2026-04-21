@@ -13,8 +13,10 @@ const TTL = 86400; // 24 hours
 const GEO_KEY = 'pixels:geo';
 
 const LAT_METERS_PER_DEG = 111320;
-// Matches DEFAULT_LAT in frontend/config.js (52.5200); used for longitude scaling
-const LNG_METERS_PER_DEG = 111320 * Math.cos(52.52 * Math.PI / 180);
+
+function lngMetersPerDeg(lat) {
+  return 111320 * Math.cos(lat * Math.PI / 180);
+}
 
 function pixelKey(id) {
   return `pixel:${id}`;
@@ -58,7 +60,7 @@ async function saveChildPixel(parentId, childKey, childPixel) {
 async function getPixelsInViewport(n, s, e, w) {
   const centerLng = (w + e) / 2;
   const centerLat = (n + s) / 2;
-  const widthM = (e - w) * LNG_METERS_PER_DEG;
+  const widthM = (e - w) * lngMetersPerDeg(centerLat);
   const heightM = (n - s) * LAT_METERS_PER_DEG;
 
   const members = await client.geoSearch(

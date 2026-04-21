@@ -44,7 +44,7 @@ pixhood/
 ├── frontend/          # Static frontend (Cloudflare Pages)
 │   ├── index.html     # Entry point, loads Leaflet CDN + app scripts
 │   ├── style.css
-│   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE, SUB_GRID_SIZE, palette
+│   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE_M, Mercator projection, palette
 │   ├── grid.js        # Tile + sub-tile key computation
 │   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
 │   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
@@ -73,13 +73,13 @@ Script load order in `index.html` matters: `config → grid → pixels → map �
 
 ## Grid system
 
-World is divided into ~10m × 10m tiles. Tile key is computed by snapping lat/lng to grid:
+World is divided into tiles in Web Mercator space (`TILE_SIZE_M = 18.4m`). Tiles are always square on screen at every latitude. Ground distance varies: ~11.1m at Berlin, ~18.4m at equator. Tile key is computed by projecting lat/lng to Mercator meters:
 
 ```js
-tileKey = `${Math.floor(lat / TILE_SIZE)}_${Math.floor(lng / LNG_STEP)}`
+tileKey = `${Math.floor(lngToX(lng) / TILE_SIZE_M)}_${Math.floor(latToY(lat) / TILE_SIZE_M)}`
 ```
 
-`TILE_SIZE = 0.0001` degrees (~10m). `LNG_STEP` is cos-corrected for latitude. One pixel per tile, last painter wins.
+Grid rendering uses direct pixel math (spacing = `TILE_SIZE_M * 256 * 2^zoom / (2 * R)`) — no per-tile projection calls. One pixel per tile, last painter wins.
 
 ### Zoom levels
 
@@ -103,7 +103,7 @@ Each tile can contain a 16×16 sub-grid of child pixels. Sub-tile keys: `${paren
 ### Parent pixel
 ```json
 {
-  "id": "525200_130450",
+  "id": "81099_374711",
   "lat": 52.5200,
   "lng": 13.4050,
   "color": "#FF0000",
@@ -116,8 +116,8 @@ Each tile can contain a 16×16 sub-grid of child pixels. Sub-tile keys: `${paren
 ### Child pixel
 ```json
 {
-  "id": "525200_130450_8_12",
-  "parentId": "525200_130450",
+  "id": "81099_374711_8_12",
+  "parentId": "81099_374711",
   "subX": 8,
   "subY": 12,
   "lat": 52.52008,
@@ -170,6 +170,7 @@ Permission flow:
 
 ## Key decisions
 
+- **Web Mercator grid**: Tiles defined in Mercator space (`TILE_SIZE_M = 18.4m`), always square on screen. Grid rendering uses direct pixel math, no per-tile projection calls.
 - **Individual keys with TTL** over single hash: natural Redis expiry, no manual cleanup.
 - **Geo sorted set**: `GEOSEARCH` for efficient viewport bounding-box queries with lazy stale cleanup.
 - **Hash per parent for sub-pixels**: always accessed as a group, `HGETALL` is efficient, whole-set expiry via TTL.

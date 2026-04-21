@@ -1,26 +1,26 @@
 function tileKey(lat, lng) {
-  const tLat = Math.floor(lat / CONFIG.TILE_SIZE);
-  const tLng = Math.floor(lng / CONFIG.LNG_STEP);
-  return `${tLat}_${tLng}`;
+  const tx = Math.floor(CONFIG.lngToX(lng) / CONFIG.TILE_SIZE_M);
+  const ty = Math.floor(CONFIG.latToY(lat) / CONFIG.TILE_SIZE_M);
+  return `${tx}_${ty}`;
 }
 
 function snapToTile(lat, lng) {
-  const tLat = Math.floor(lat / CONFIG.TILE_SIZE);
-  const tLng = Math.floor(lng / CONFIG.LNG_STEP);
+  const tx = Math.floor(CONFIG.lngToX(lng) / CONFIG.TILE_SIZE_M);
+  const ty = Math.floor(CONFIG.latToY(lat) / CONFIG.TILE_SIZE_M);
   return {
-    lat: tLat * CONFIG.TILE_SIZE,
-    lng: tLng * CONFIG.LNG_STEP,
-    key: `${tLat}_${tLng}`
+    lat: CONFIG.yToLat(ty * CONFIG.TILE_SIZE_M),
+    lng: CONFIG.xToLng(tx * CONFIG.TILE_SIZE_M),
+    key: `${tx}_${ty}`
   };
 }
 
 function tileBounds(key) {
   const parts = key.split('_');
-  const tLat = Number(parts[0]);
-  const tLng = Number(parts[1]);
+  const tx = Number(parts[0]);
+  const ty = Number(parts[1]);
   return {
-    sw: [tLat * CONFIG.TILE_SIZE, tLng * CONFIG.LNG_STEP],
-    ne: [(tLat + 1) * CONFIG.TILE_SIZE, (tLng + 1) * CONFIG.LNG_STEP]
+    sw: [CONFIG.yToLat(ty * CONFIG.TILE_SIZE_M), CONFIG.xToLng(tx * CONFIG.TILE_SIZE_M)],
+    ne: [CONFIG.yToLat((ty + 1) * CONFIG.TILE_SIZE_M), CONFIG.xToLng((tx + 1) * CONFIG.TILE_SIZE_M)]
   };
 }
 
