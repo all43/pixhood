@@ -196,9 +196,12 @@ document.addEventListener('visibilitychange', () => {
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     _stopHeartbeat();
   } else {
-    if (!_ws || _ws.readyState !== 1) _openWS();
-    else _startHeartbeat();
-    if (typeof refreshViewport === 'function') refreshViewport();
+    if (!_ws || _ws.readyState !== 1) {
+      _openWS();
+      if (typeof refreshViewport === 'function') refreshViewport();
+    } else {
+      _startHeartbeat();
+    }
   }
 });
 
