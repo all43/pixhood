@@ -53,65 +53,79 @@ async function loadViewport(viewportBounds, zoom) {
 
 async function writePixel(lat, lng, color) {
   const tile = snapToTile(lat, lng);
-  const pixel = {
-    id: tile.key,
+  const msg = {
+    type: CONFIG.WS_TYPE_PAINT_PARENT,
+    id: nextPaintId(),
+    tileKey: tile.key,
     lat: tile.lat,
     lng: tile.lng,
-    color,
-    paintedAt: new Date().toISOString(),
-    sessionId: getSessionId()
+    color
   };
-  const res = await fetch(`${CONFIG.API_URL}/pixels`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(pixel)
-  });
-  if (!res.ok) throw new Error(`Failed to write pixel: ${res.status}`);
-  return pixel;
+  _sendPaint(msg);
+  return { id: tile.key, lat: tile.lat, lng: tile.lng, color, hasChildren: false };
 }
 
 async function writeChildPixel(parentKey, lat, lng, color) {
   const sub = snapToSubTile(parentKey, lat, lng);
-  const childPixel = {
-    id: sub.key,
+  const msg = {
+    type: CONFIG.WS_TYPE_PAINT_CHILD,
+    id: nextPaintId(),
     parentId: parentKey,
+    tileKey: sub.key,
     subX: sub.subX,
     subY: sub.subY,
     lat: sub.lat,
     lng: sub.lng,
-    color,
-    paintedAt: new Date().toISOString(),
-    sessionId: getSessionId()
+    color
   };
-  const res = await fetch(`${CONFIG.API_URL}/pixels/child`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      parentId: parentKey,
-      childKey: sub.key,
-      childPixel
-    })
-  });
-  if (!res.ok) throw new Error(`Failed to write child pixel: ${res.status}`);
-  return childPixel;
+  _sendPaint(msg);
+  return { id: sub.key, parentId: parentKey, subX: sub.subX, subY: sub.subY, lat: sub.lat, lng: sub.lng, color };
 }
 
 let _ws = null;
 let _onPixel = null;
 let _onChild = null;
+let _onDelete = null;
+let _onPaintError = null;
+let _onBlocked = null;
 let _retryDelay = 1000;
 let _heartbeatTimer = null;
+let _paintSeq = 0;
+const _pendingPaints = new Map();
 
-function connectWebSocket(onPixel, onChild) {
+function nextPaintId() { return ++_paintSeq; }
+
+function _sendPaint(msg) {
+  if (!_ws || _ws.readyState !== 1) return;
+  _ws.send(JSON.stringify(msg));
+  const timer = setTimeout(() => {
+    _pendingPaints.delete(msg.id);
+    if (_onPaintError) _onPaintError('timeout');
+  }, CONFIG.PAINT_ACK_TIMEOUT);
+  _pendingPaints.set(msg.id, timer);
+}
+
+function _flushPending() {
+  const count = _pendingPaints.size;
+  for (const [, timer] of _pendingPaints) clearTimeout(timer);
+  _pendingPaints.clear();
+  if (count > 0 && _onPaintError) _onPaintError('disconnect', count);
+}
+
+function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked) {
   _onPixel = onPixel;
   _onChild = onChild || null;
+  _onDelete = onDelete || null;
+  _onPaintError = onPaintError || null;
+  _onBlocked = onBlocked || null;
   _openWS();
 }
 
 function sendViewport(viewportBounds) {
   if (!_ws || _ws.readyState !== 1) return;
   const fb = computeFetchBounds(viewportBounds);
-  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb }));
+  const zoom = typeof getCurrentZoom === 'function' ? getCurrentZoom() : 0;
+  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, sessionId: getSessionId(), zoom }));
 }
 
 let _onViewportReady = null;
@@ -127,13 +141,15 @@ function _openWS() {
     console.log('WS connected');
     _retryDelay = CONFIG.WS_RETRY_INITIAL_MS;
     _startHeartbeat();
+    const sid = getSessionId();
+    const zoom = typeof getCurrentZoom === 'function' ? getCurrentZoom() : 0;
     if (_loadedBounds) {
-      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: _loadedBounds }));
+      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: _loadedBounds, sessionId: sid, zoom }));
     } else if (_onViewportReady) {
       const bounds = _onViewportReady();
       if (bounds) {
         const fb = computeFetchBounds(bounds);
-        _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb }));
+        _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, sessionId: sid, zoom }));
       }
     }
   });
@@ -144,7 +160,18 @@ function _openWS() {
       if (msg.type === CONFIG.WS_TYPE_PIXEL && _onPixel) _onPixel(msg.data);
       if (msg.type === CONFIG.WS_TYPE_CHILD && _onChild) _onChild(msg.data, msg.type);
       if (msg.type === CONFIG.WS_TYPE_CLEAR_CHILDREN && _onChild) _onChild(msg.data, msg.type);
+      if (msg.type === CONFIG.WS_TYPE_DELETE_PIXEL && _onDelete) _onDelete(msg.data);
       if (msg.type === CONFIG.WS_TYPE_PONG) return;
+      if (msg.type === CONFIG.WS_TYPE_PAINT_ACK) {
+        const timer = _pendingPaints.get(msg.id);
+        if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
+      }
+      if (msg.type === CONFIG.WS_TYPE_PAINT_ERROR) {
+        const timer = _pendingPaints.get(msg.id);
+        if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
+        if (_onPaintError) _onPaintError(msg.reason, 1, msg.retryAfter);
+      }
+      if (msg.type === CONFIG.WS_TYPE_BLOCKED && _onBlocked) _onBlocked();
     } catch (err) {
       console.error('WS message parse error:', err);
     }
@@ -153,6 +180,7 @@ function _openWS() {
   _ws.addEventListener('close', () => {
     console.log(`WS closed — reconnecting in ${_retryDelay}ms`);
     _stopHeartbeat();
+    _flushPending();
     setTimeout(_openWS, _retryDelay);
     _retryDelay = Math.min(_retryDelay * 2, CONFIG.WS_RETRY_MAX_MS);
   });

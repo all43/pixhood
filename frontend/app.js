@@ -311,6 +311,32 @@ function onWSChild(data, msgType) {
   updateParentDisplay(parentId);
 }
 
+function onWSDelete(data) {
+  removePixel(data.id);
+}
+
+function onPaintError(reason, count, retryAfter) {
+  if (reason === 'rate_limited') {
+    showToast(`Slow down! Try again in ${retryAfter || 30}s`);
+  } else if (reason === 'blocked') {
+    showToast('Painting suspended — your session was flagged');
+  } else if (reason === 'timeout') {
+    showToast('Paint may not have saved — server slow to respond');
+    scheduleViewportRefresh();
+  } else if (reason === 'disconnect') {
+    showToast(`${count} paint(s) didn\u2019t save \u2014 reconnecting`);
+    scheduleViewportRefresh();
+  } else {
+    showToast('Paint failed to save');
+    scheduleViewportRefresh();
+  }
+}
+
+function onWSBlocked() {
+  showToast('Your paints were reverted due to suspicious activity');
+  scheduleViewportRefresh();
+}
+
 async function refreshViewport() {
   const vb = getViewportBounds();
   const zoom = getCurrentZoom();
@@ -355,7 +381,7 @@ async function proceedToMap(geoResult, pixelsPromise) {
 
   setViewportReadyCallback(() => getViewportBounds());
 
-  connectWebSocket(onWSPixel, onWSChild);
+  connectWebSocket(onWSPixel, onWSChild, onWSDelete, onPaintError, onWSBlocked);
 
   const vb = getViewportBounds();
   sendViewport(vb);

@@ -1,25 +1,42 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
+const WS_TYPES = require('../shared/ws-types');
 
 const CONSTANTS = {
   WS_OPEN: 1,
-  WS_TYPE_PING: 'ping',
-  WS_TYPE_PONG: 'pong',
-  WS_TYPE_VIEWPORT: 'viewport',
-  WS_TYPE_PIXEL: 'pixel',
-  WS_TYPE_CHILD: 'child',
-  WS_TYPE_CLEAR_CHILDREN: 'clearChildren'
+  ...WS_TYPES
 };
 
 const PORT = process.env.PORT || 3000;
-
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY || null;
+
+const RATE_LIMITS = {
+  SESSION_BURST: { windowMs: 1000, max: 10 },
+  SESSION_SUSTAINED: { windowMs: 60000, max: 60 },
+  IP_WRITE: { windowMs: 60000, max: 120 },
+  IP_READ: { windowMs: 60000, max: 300 }
+};
+
+const AUTO_REVERT = {
+  BURST_MAX: 30,
+  BURST_WINDOW_MS: 5000,
+  DISTANCE_MAX_M: 2000,
+  DISTANCE_WINDOW_MS: 5000,
+  FLAG_COUNT: 3,
+  FLAG_WINDOW_MS: 600000
+};
+
+const MAX_WS_PER_IP = 5;
+
+const sessionStates = new Map();
+const ipConnections = new Map();
 
 function setCORS(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
 function readBody(req) {
@@ -29,6 +46,330 @@ function readBody(req) {
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
+}
+
+function getClientIP(req) {
+  return req.headers['cf-connecting-ip'] ||
+         req.headers['fly-client-ip'] ||
+         (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+         req.socket?.remoteAddress ||
+         'unknown';
+}
+
+function getWSIP(ws) {
+  return ws._clientIP || 'unknown';
+}
+
+function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function checkPaintSuspicion(sessionId, lat, lng) {
+  const state = sessionStates.get(sessionId);
+  if (!state) return { suspicious: false, reasons: [] };
+
+  let suspicious = false;
+  const reasons = [];
+
+  if (state.viewport) {
+    const vp = state.viewport;
+    const latSpan = vp.n - vp.s;
+    const lngSpan = vp.e - vp.w;
+    const m = 2.0;
+    if (lat < vp.s - latSpan * m || lat > vp.n + latSpan * m ||
+        lng < vp.w - lngSpan * m || lng > vp.e + lngSpan * m) {
+      suspicious = true;
+      reasons.push('outside_viewport');
+    }
+
+    if (state.zoom != null && !isViewportPlausible(vp, state.zoom)) {
+      suspicious = true;
+      reasons.push('implausible_viewport');
+    }
+  }
+
+  if (state.lastPaintLat != null && state.lastPaintTime != null) {
+    const distance = haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
+    const elapsed = (Date.now() - state.lastPaintTime) / 1000;
+    if (elapsed > 0 && elapsed < 60 && distance / elapsed > 500) {
+      suspicious = true;
+      reasons.push('excessive_distance');
+    }
+  }
+
+  return { suspicious, reasons };
+}
+
+function updateSessionPaint(sessionId, lat, lng) {
+  let state = sessionStates.get(sessionId);
+  if (!state) {
+    state = { viewport: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+    sessionStates.set(sessionId, state);
+  }
+  state.lastPaintLat = lat;
+  state.lastPaintLng = lng;
+  state.lastPaintTime = Date.now();
+}
+
+function updateSessionViewport(sessionId, viewport, zoom) {
+  let state = sessionStates.get(sessionId);
+  if (!state) {
+    state = { viewport: null, zoom: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+    sessionStates.set(sessionId, state);
+  }
+  state.viewport = viewport;
+  state.zoom = zoom || null;
+}
+
+function isViewportPlausible(bounds, zoom) {
+  if (!zoom || zoom < 1 || zoom > 22) return true;
+  const latSpan = Math.abs(bounds.n - bounds.s);
+  const lngSpan = Math.abs(bounds.e - bounds.w);
+  const maxSpan = 360 / Math.pow(2, zoom - 3);
+  if (latSpan > maxSpan || lngSpan > maxSpan) return false;
+  return true;
+}
+
+function addSessionFlag(sessionId, reason) {
+  let state = sessionStates.get(sessionId);
+  if (!state) {
+    state = { viewport: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+    sessionStates.set(sessionId, state);
+  }
+  state.flags.push({ reason, time: Date.now() });
+}
+
+function countRecentFlags(sessionId, windowMs) {
+  const state = sessionStates.get(sessionId);
+  if (!state) return 0;
+  const cutoff = Date.now() - windowMs;
+  return state.flags.filter(f => f.time >= cutoff).length;
+}
+
+function checkAdminAuth(req) {
+  if (!ADMIN_API_KEY) return false;
+  const auth = req.headers['authorization'] || '';
+  return auth === `Bearer ${ADMIN_API_KEY}`;
+}
+
+function sendRateLimited(res, retryAfter) {
+  res.writeHead(429, {
+    'Content-Type': 'application/json',
+    'Retry-After': String(retryAfter)
+  });
+  res.end(JSON.stringify({ error: 'Too many requests', retryAfter }));
+}
+
+async function checkWriteRateLimits(ip, sessionId) {
+  const ipLimit = await redis.checkIPRateLimit(ip, 'write', RATE_LIMITS.IP_WRITE.max, RATE_LIMITS.IP_WRITE.windowMs);
+  if (!ipLimit.allowed) return ipLimit.retryAfter;
+
+  const burst = await redis.countPaintsInWindow(sessionId, RATE_LIMITS.SESSION_BURST.windowMs);
+  if (burst > RATE_LIMITS.SESSION_BURST.max) {
+    return RATE_LIMITS.SESSION_BURST.windowMs / 1000;
+  }
+
+  const sustained = await redis.countPaintsInWindow(sessionId, RATE_LIMITS.SESSION_SUSTAINED.windowMs);
+  if (sustained > RATE_LIMITS.SESSION_SUSTAINED.max) {
+    return RATE_LIMITS.SESSION_SUSTAINED.windowMs / 1000;
+  }
+
+  return null;
+}
+
+async function shouldAutoRevert(sessionId, lat, lng) {
+  const burst = await redis.countPaintsInWindow(sessionId, AUTO_REVERT.BURST_WINDOW_MS);
+  if (burst > AUTO_REVERT.BURST_MAX) return 'burst';
+
+  const state = sessionStates.get(sessionId);
+  if (state && state.lastPaintLat != null && state.lastPaintTime != null) {
+    const distance = haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
+    const elapsed = (Date.now() - state.lastPaintTime) / 1000;
+    if (elapsed > 0 && elapsed < AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
+        distance > AUTO_REVERT.DISTANCE_MAX_M) {
+      return 'distance';
+    }
+  }
+
+  const recentFlags = countRecentFlags(sessionId, AUTO_REVERT.FLAG_WINDOW_MS);
+  if (recentFlags >= AUTO_REVERT.FLAG_COUNT) return 'flags';
+
+  return null;
+}
+
+async function handlePaintParent(ws, msg) {
+  const sessionId = ws.sessionId;
+  if (!sessionId) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_session' }));
+    return;
+  }
+
+  if (await redis.isSessionBlocked(sessionId)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+    return;
+  }
+
+  const ip = getWSIP(ws);
+  const retryAfter = await checkWriteRateLimits(ip, sessionId);
+  if (retryAfter) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'rate_limited', retryAfter }));
+    return;
+  }
+
+  const { tileKey, lat, lng, color } = msg;
+  const pixel = {
+    id: tileKey,
+    lat,
+    lng,
+    color,
+    paintedAt: new Date().toISOString(),
+    sessionId
+  };
+
+  const prevRaw = await redis.getPixelRaw(pixel.id);
+  const prevPixel = prevRaw ? JSON.parse(prevRaw) : null;
+  const prevChildrenRaw = await redis.getSubpixelsAll(pixel.id);
+  const prevChildren = Object.keys(prevChildrenRaw).length > 0
+    ? Object.values(prevChildrenRaw).map(v => JSON.parse(v))
+    : null;
+
+  await redis.logPaint(sessionId, {
+    tileKey: pixel.id,
+    type: 'parent',
+    lat: pixel.lat,
+    lng: pixel.lng,
+    color: pixel.color,
+    previousColor: prevPixel ? prevPixel.color : null,
+    previousLat: prevPixel ? prevPixel.lat : null,
+    previousLng: prevPixel ? prevPixel.lng : null,
+    previousSessionId: prevPixel ? prevPixel.sessionId : null,
+    previousChildren: prevChildren
+  });
+
+  updateSessionPaint(sessionId, pixel.lat, pixel.lng);
+
+  const autoRevertReason = await shouldAutoRevert(sessionId, pixel.lat, pixel.lng);
+  if (autoRevertReason) {
+    console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
+    const result = await redis.revertSession(sessionId);
+    await redis.blockSession(sessionId);
+    for (const tile of result.tiles) {
+      if (tile.action === 'restored' && tile.pixel) {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
+      } else if (tile.action === 'deleted') {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
+      } else if (tile.action === 'child_reverted' && tile.parentData) {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+      }
+    }
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
+    return;
+  }
+
+  const suspicion = checkPaintSuspicion(sessionId, pixel.lat, pixel.lng);
+  if (suspicion.suspicious) {
+    console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${pixel.lat} lng=${pixel.lng}`);
+    redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
+    for (const reason of suspicion.reasons) {
+      addSessionFlag(sessionId, reason);
+    }
+  }
+
+  await redis.deleteSubpixels(pixel.id);
+  await redis.savePixel(pixel);
+  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } });
+  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } });
+  ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }));
+}
+
+async function handlePaintChild(ws, msg) {
+  const sessionId = ws.sessionId;
+  if (!sessionId) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_session' }));
+    return;
+  }
+
+  if (await redis.isSessionBlocked(sessionId)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+    return;
+  }
+
+  const ip = getWSIP(ws);
+  const retryAfter = await checkWriteRateLimits(ip, sessionId);
+  if (retryAfter) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'rate_limited', retryAfter }));
+    return;
+  }
+
+  const { parentId, tileKey, lat, lng, color } = msg;
+  const childKey = tileKey;
+  const childPixel = {
+    id: tileKey,
+    parentId,
+    subX: msg.subX,
+    subY: msg.subY,
+    lat,
+    lng,
+    color,
+    paintedAt: new Date().toISOString(),
+    sessionId
+  };
+
+  const prevChildRaw = await redis.getChildRaw(parentId, childKey);
+  const prevChild = prevChildRaw ? JSON.parse(prevChildRaw) : null;
+
+  await redis.logPaint(sessionId, {
+    tileKey: parentId,
+    type: 'child',
+    childKey,
+    lat: childPixel.lat,
+    lng: childPixel.lng,
+    color: childPixel.color,
+    previousChildColor: prevChild ? prevChild.color : null,
+    previousSubX: prevChild ? prevChild.subX : null,
+    previousSubY: prevChild ? prevChild.subY : null
+  });
+
+  updateSessionPaint(sessionId, childPixel.lat, childPixel.lng);
+
+  const autoRevertReason = await shouldAutoRevert(sessionId, childPixel.lat, childPixel.lng);
+  if (autoRevertReason) {
+    console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
+    const result = await redis.revertSession(sessionId);
+    await redis.blockSession(sessionId);
+    for (const tile of result.tiles) {
+      if (tile.action === 'restored' && tile.pixel) {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
+      } else if (tile.action === 'deleted') {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
+      } else if (tile.action === 'child_reverted' && tile.parentData) {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+      }
+    }
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
+    return;
+  }
+
+  const suspicion = checkPaintSuspicion(sessionId, childPixel.lat, childPixel.lng);
+  if (suspicion.suspicious) {
+    console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${childPixel.lat} lng=${childPixel.lng}`);
+    redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
+    for (const reason of suspicion.reasons) {
+      addSessionFlag(sessionId, reason);
+    }
+  }
+
+  const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
+  broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } });
+  ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }));
 }
 
 async function handleRequest(req, res) {
@@ -44,6 +385,13 @@ async function handleRequest(req, res) {
   if (req.method === 'GET' && url.pathname === '/pixels') {
     setCORS(res);
     try {
+      const ip = getClientIP(req);
+      const readLimit = await redis.checkIPRateLimit(ip, 'read', RATE_LIMITS.IP_READ.max, RATE_LIMITS.IP_READ.windowMs);
+      if (!readLimit.allowed) {
+        sendRateLimited(res, readLimit.retryAfter);
+        return;
+      }
+
       const n = parseFloat(url.searchParams.get('n'));
       const s = parseFloat(url.searchParams.get('s'));
       const e = parseFloat(url.searchParams.get('e'));
@@ -80,6 +428,11 @@ async function handleRequest(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/pixels') {
     setCORS(res);
+    if (!checkAdminAuth(req)) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
     try {
       const body = await readBody(req);
       const pixel = JSON.parse(body);
@@ -99,20 +452,101 @@ async function handleRequest(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/pixels/child') {
     setCORS(res);
+    if (!checkAdminAuth(req)) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
     try {
       const body = await readBody(req);
       const { parentId, childKey, childPixel } = JSON.parse(body);
-
       const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
-
       broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } });
-
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       console.error('POST /pixels/child error:', err);
       res.writeHead(400);
       res.end('Bad request');
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname.startsWith('/admin/session/')) {
+    if (!checkAdminAuth(req)) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
+    const sessionId = url.pathname.slice('/admin/session/'.length);
+    try {
+      const paints = await redis.getSessionPaints(sessionId);
+      const flagged = await redis.isSessionFlagged(sessionId);
+      const blocked = await redis.isSessionBlocked(sessionId);
+      const state = sessionStates.get(sessionId) || null;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessionId, paints, flagged, blocked, state }));
+    } catch (err) {
+      console.error('GET /admin/session error:', err);
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/flagged') {
+    if (!checkAdminAuth(req)) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
+    try {
+      const sessions = await redis.getFlaggedSessions();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions }));
+    } catch (err) {
+      console.error('GET /admin/flagged error:', err);
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/revert') {
+    if (!checkAdminAuth(req)) {
+      res.writeHead(401);
+      res.end('Unauthorized');
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const { sessionId } = JSON.parse(body);
+      if (!sessionId) {
+        res.writeHead(400);
+        res.end('Missing sessionId');
+        return;
+      }
+
+      const result = await redis.revertSession(sessionId);
+      await redis.unflagSession(sessionId);
+      await redis.unblockSession(sessionId);
+
+      for (const tile of result.tiles) {
+        if (tile.action === 'restored' && tile.pixel) {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
+        } else if (tile.action === 'deleted') {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
+        } else if (tile.action === 'child_reverted' && tile.parentData) {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, reverted: result.reverted }));
+    } catch (err) {
+      console.error('POST /admin/revert error:', err);
+      res.writeHead(500);
+      res.end('Internal server error');
     }
     return;
   }
@@ -145,9 +579,36 @@ function getConnectedCount() {
   return count;
 }
 
-wss.on('connection', ws => {
+function incrementIP(ip) {
+  const count = (ipConnections.get(ip) || 0) + 1;
+  ipConnections.set(ip, count);
+  return count;
+}
+
+function decrementIP(ip) {
+  const count = (ipConnections.get(ip) || 1) - 1;
+  if (count <= 0) {
+    ipConnections.delete(ip);
+  } else {
+    ipConnections.set(ip, count);
+  }
+}
+
+wss.on('connection', (ws, req) => {
+  const ip = getClientIP(req);
+  ws._clientIP = ip;
   ws.viewport = null;
-  console.log(`WS client connected (${getConnectedCount()} total)`);
+  ws.sessionId = null;
+
+  const currentCount = incrementIP(ip);
+  if (currentCount > MAX_WS_PER_IP) {
+    console.warn(`[ip-limit] rejecting connection from ${ip} (${currentCount} active)`);
+    decrementIP(ip);
+    ws.close(1008, 'Too many connections');
+    return;
+  }
+
+  console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount})`);
 
   ws.on('message', raw => {
     try {
@@ -156,12 +617,31 @@ wss.on('connection', ws => {
         ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PONG }));
       } else if (msg.type === CONSTANTS.WS_TYPE_VIEWPORT && msg.bounds) {
         ws.viewport = msg.bounds;
+        if (msg.sessionId) {
+          ws.sessionId = msg.sessionId;
+          updateSessionViewport(msg.sessionId, msg.bounds, msg.zoom);
+        }
+      } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_PARENT) {
+        handlePaintParent(ws, msg).catch(err => {
+          console.error('handlePaintParent error:', err);
+          try {
+            ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'server_error' }));
+          } catch {}
+        });
+      } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_CHILD) {
+        handlePaintChild(ws, msg).catch(err => {
+          console.error('handlePaintChild error:', err);
+          try {
+            ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'server_error' }));
+          } catch {}
+        });
       }
     } catch {}
   });
 
   ws.on('error', err => console.error('WS client error:', err));
   ws.on('close', () => {
+    decrementIP(ip);
     console.log(`WS client disconnected (${getConnectedCount()} total)`);
   });
 });

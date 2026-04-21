@@ -64,10 +64,20 @@ const CONFIG = {
   WS_TYPE_PIXEL: 'pixel',
   WS_TYPE_CHILD: 'child',
   WS_TYPE_CLEAR_CHILDREN: 'clearChildren',
+  WS_TYPE_DELETE_PIXEL: 'deletePixel',
+
+  WS_TYPE_PAINT_PARENT: 'paintParent',
+  WS_TYPE_PAINT_CHILD: 'paintChild',
+  WS_TYPE_PAINT_ACK: 'paintAck',
+  WS_TYPE_PAINT_ERROR: 'paintError',
+  WS_TYPE_BLOCKED: 'blocked',
 
   // WebSocket reconnect (ms)
   WS_RETRY_INITIAL_MS: 1000,
   WS_RETRY_MAX_MS: 30000,
+
+  // Paint ack timeout (ms)
+  PAINT_ACK_TIMEOUT: 5000,
 
   // Refetch trigger
   REFETCH_THRESHOLD: 0.5,

@@ -2,6 +2,29 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
+const SHARED_WS_TYPES = require('../shared/ws-types');
+
+function validateWsTypesSync() {
+  const configSrc = fs.readFileSync(path.join(__dirname, 'config.js'), 'utf8');
+  const mismatched = [];
+  for (const [key, expected] of Object.entries(SHARED_WS_TYPES)) {
+    const match = configSrc.match(new RegExp(key + "\\s*:\\s*'([^']+)'"));
+    if (!match) {
+      mismatched.push(`  ${key}: missing from frontend config.js`);
+    } else if (match[1] !== expected) {
+      mismatched.push(`  ${key}: frontend='${match[1]}' shared='${expected}'`);
+    }
+  }
+  if (mismatched.length > 0) {
+    console.error('WS type mismatch between shared/ws-types.js and frontend config.js:');
+    mismatched.forEach(m => console.error(m));
+    console.error('Update frontend/config.js to match shared/ws-types.js');
+    process.exit(1);
+  }
+}
+
+validateWsTypesSync();
+
 const SRC_DIR = path.join(__dirname);
 const DIST_DIR = path.join(__dirname, 'dist');
 const PUBLIC_DIR = path.join(__dirname, 'public');
