@@ -2,6 +2,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
 const WS_TYPES = require('./shared/ws-types');
+const S = require('./suspicion');
 
 const CONSTANTS = {
   WS_OPEN: 1,
@@ -11,24 +12,6 @@ const CONSTANTS = {
 const PORT = process.env.PORT || 3000;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || null;
-
-const RATE_LIMITS = {
-  SESSION_BURST: { windowMs: 1000, max: 10 },
-  SESSION_SUSTAINED: { windowMs: 60000, max: 60 },
-  IP_WRITE: { windowMs: 60000, max: 120 },
-  IP_READ: { windowMs: 60000, max: 300 }
-};
-
-const AUTO_REVERT = {
-  BURST_MAX: 30,
-  BURST_WINDOW_MS: 5000,
-  DISTANCE_MAX_M: 2000,
-  DISTANCE_WINDOW_MS: 5000,
-  FLAG_COUNT: 3,
-  FLAG_WINDOW_MS: 600000
-};
-
-const MAX_WS_PER_IP = 10;
 
 const sessionStates = new Map();
 
@@ -59,97 +42,36 @@ function getWSIP(ws) {
   return ws._clientIP || 'unknown';
 }
 
-function haversineDistance(lat1, lng1, lat2, lng2) {
-  const R = 6371000;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-            Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function checkPaintSuspicion(sessionId, lat, lng) {
-  const state = sessionStates.get(sessionId);
-  if (!state) return { suspicious: false, reasons: [] };
-
-  let suspicious = false;
-  const reasons = [];
-
-  if (state.viewport) {
-    const vp = state.viewport;
-    const latSpan = vp.n - vp.s;
-    const lngSpan = vp.e - vp.w;
-    const m = 2.0;
-    if (lat < vp.s - latSpan * m || lat > vp.n + latSpan * m ||
-        lng < vp.w - lngSpan * m || lng > vp.e + lngSpan * m) {
-      suspicious = true;
-      reasons.push('outside_viewport');
-    }
-
-    if (state.zoom != null && !isViewportPlausible(vp, state.zoom)) {
-      suspicious = true;
-      reasons.push('implausible_viewport');
-    }
-  }
-
-  if (state.lastPaintLat != null && state.lastPaintTime != null) {
-    const distance = haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
-    const elapsed = (Date.now() - state.lastPaintTime) / 1000;
-    if (elapsed > 0 && elapsed < 60 && distance / elapsed > 500) {
-      suspicious = true;
-      reasons.push('excessive_distance');
-    }
-  }
-
-  return { suspicious, reasons };
-}
-
 function updateSessionPaint(sessionId, lat, lng) {
   let state = sessionStates.get(sessionId);
   if (!state) {
-    state = { viewport: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+    state = S.createSessionState();
     sessionStates.set(sessionId, state);
   }
-  state.lastPaintLat = lat;
-  state.lastPaintLng = lng;
-  state.lastPaintTime = Date.now();
+  S.updateSessionPaint(state, lat, lng, Date.now());
 }
 
 function updateSessionViewport(sessionId, viewport, zoom) {
   let state = sessionStates.get(sessionId);
   if (!state) {
-    state = { viewport: null, zoom: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+    state = S.createSessionState();
     sessionStates.set(sessionId, state);
   }
-  state.viewport = viewport;
-  state.zoom = zoom || null;
-}
-
-function isViewportPlausible(bounds, zoom) {
-  if (!zoom || zoom < 1 || zoom > 22) return true;
-  const latSpan = Math.abs(bounds.n - bounds.s);
-  const lngSpan = Math.abs(bounds.e - bounds.w);
-  const maxSpan = 360 / Math.pow(2, zoom - 6);
-  if (latSpan > maxSpan || lngSpan > maxSpan) return false;
-  return true;
+  S.updateSessionViewport(state, viewport, zoom);
 }
 
 function addSessionFlag(sessionId, reason) {
   let state = sessionStates.get(sessionId);
   if (!state) {
-    state = { viewport: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+    state = S.createSessionState();
     sessionStates.set(sessionId, state);
   }
-  state.flags.push({ reason, time: Date.now() });
+  S.addSessionFlag(state, reason, Date.now());
 }
 
 function countRecentFlags(sessionId, windowMs) {
   const state = sessionStates.get(sessionId);
-  if (!state) return 0;
-  const cutoff = Date.now() - windowMs;
-  state.flags = state.flags.filter(f => f.time >= cutoff);
-  return state.flags.length;
+  return S.countRecentFlags(state, windowMs, Date.now());
 }
 
 function checkAdminAuth(req) {
@@ -167,38 +89,38 @@ function sendRateLimited(res, retryAfter) {
 }
 
 async function checkWriteRateLimits(ip, sessionId) {
-  const ipLimit = await redis.checkIPRateLimit(ip, 'write', RATE_LIMITS.IP_WRITE.max, RATE_LIMITS.IP_WRITE.windowMs);
+  const ipLimit = await redis.checkIPRateLimit(ip, 'write', S.RATE_LIMITS.IP_WRITE.max, S.RATE_LIMITS.IP_WRITE.windowMs);
   if (!ipLimit.allowed) return ipLimit.retryAfter;
 
-  const burst = await redis.countPaintsInWindow(sessionId, RATE_LIMITS.SESSION_BURST.windowMs);
-  if (burst > RATE_LIMITS.SESSION_BURST.max) {
-    return RATE_LIMITS.SESSION_BURST.windowMs / 1000;
+  const burst = await redis.countPaintsInWindow(sessionId, S.RATE_LIMITS.SESSION_BURST.windowMs);
+  if (burst > S.RATE_LIMITS.SESSION_BURST.max) {
+    return S.RATE_LIMITS.SESSION_BURST.windowMs / 1000;
   }
 
-  const sustained = await redis.countPaintsInWindow(sessionId, RATE_LIMITS.SESSION_SUSTAINED.windowMs);
-  if (sustained > RATE_LIMITS.SESSION_SUSTAINED.max) {
-    return RATE_LIMITS.SESSION_SUSTAINED.windowMs / 1000;
+  const sustained = await redis.countPaintsInWindow(sessionId, S.RATE_LIMITS.SESSION_SUSTAINED.windowMs);
+  if (sustained > S.RATE_LIMITS.SESSION_SUSTAINED.max) {
+    return S.RATE_LIMITS.SESSION_SUSTAINED.windowMs / 1000;
   }
 
   return null;
 }
 
 async function shouldAutoRevert(sessionId, lat, lng) {
-  const burst = await redis.countPaintsInWindow(sessionId, AUTO_REVERT.BURST_WINDOW_MS);
-  if (burst > AUTO_REVERT.BURST_MAX) return 'burst';
+  const burst = await redis.countPaintsInWindow(sessionId, S.AUTO_REVERT.BURST_WINDOW_MS);
+  if (burst > S.AUTO_REVERT.BURST_MAX) return 'burst';
 
   const state = sessionStates.get(sessionId);
   if (state && state.lastPaintLat != null && state.lastPaintTime != null) {
-    const distance = haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
+    const distance = S.haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
     const elapsed = (Date.now() - state.lastPaintTime) / 1000;
-    if (elapsed > 0 && elapsed < AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
-        distance > AUTO_REVERT.DISTANCE_MAX_M) {
+    if (elapsed > 0 && elapsed < S.AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
+        distance > S.AUTO_REVERT.DISTANCE_MAX_M) {
       return 'distance';
     }
   }
 
-  const recentFlags = countRecentFlags(sessionId, AUTO_REVERT.FLAG_WINDOW_MS);
-  if (recentFlags >= AUTO_REVERT.FLAG_COUNT) return 'flags';
+  const recentFlags = countRecentFlags(sessionId, S.AUTO_REVERT.FLAG_WINDOW_MS);
+  if (recentFlags >= S.AUTO_REVERT.FLAG_COUNT) return 'flags';
 
   return null;
 }
@@ -273,7 +195,7 @@ async function handlePaintParent(ws, msg) {
     return;
   }
 
-  const suspicion = checkPaintSuspicion(sessionId, pixel.lat, pixel.lng);
+  const suspicion = S.checkPaintSuspicion(sessionStates.get(sessionId), pixel.lat, pixel.lng, Date.now());
   if (suspicion.suspicious) {
     console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${pixel.lat} lng=${pixel.lng}`);
     redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
@@ -358,7 +280,7 @@ async function handlePaintChild(ws, msg) {
     return;
   }
 
-  const suspicion = checkPaintSuspicion(sessionId, childPixel.lat, childPixel.lng);
+  const suspicion = S.checkPaintSuspicion(sessionStates.get(sessionId), childPixel.lat, childPixel.lng, Date.now());
   if (suspicion.suspicious) {
     console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${childPixel.lat} lng=${childPixel.lng}`);
     redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
@@ -386,7 +308,7 @@ async function handleRequest(req, res) {
     setCORS(res);
     try {
       const ip = getClientIP(req);
-      const readLimit = await redis.checkIPRateLimit(ip, 'read', RATE_LIMITS.IP_READ.max, RATE_LIMITS.IP_READ.windowMs);
+      const readLimit = await redis.checkIPRateLimit(ip, 'read', S.RATE_LIMITS.IP_READ.max, S.RATE_LIMITS.IP_READ.windowMs);
       if (!readLimit.allowed) {
         sendRateLimited(res, readLimit.retryAfter);
         return;
@@ -594,7 +516,7 @@ wss.on('connection', (ws, req) => {
   ws.sessionId = null;
 
   const currentCount = countIPConnections(ip);
-  if (currentCount >= MAX_WS_PER_IP) {
+  if (currentCount >= S.MAX_WS_PER_IP) {
     console.warn(`[ip-limit] rejecting connection from ${ip} (${currentCount} active)`);
     ws.close(1008, 'Too many connections');
     return;
