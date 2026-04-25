@@ -54,7 +54,16 @@
   <script src="pixels.js"></script>
   <script src="map.js"></script>
   <script src="app.js"></script>
-  <script src="admin.js"></script>
+
+  <!-- Admin (loaded dynamically on #admin) -->
+  <script>
+    if (location.hash === '#admin') {
+      document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'admin.css' }));
+      var _as = document.createElement('script');
+      _as.src = 'admin.js';
+      document.body.appendChild(_as);
+    }
+  </script>
 
   <!-- Service Worker registration (production only) -->
   <script>

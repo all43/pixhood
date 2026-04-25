@@ -372,10 +372,8 @@ async function initAdmin() {
   }
 }
 
-if (location.hash === '#admin') {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(initAdmin, 500));
-  } else {
-    setTimeout(initAdmin, 500);
-  }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => setTimeout(initAdmin, 500));
+} else {
+  setTimeout(initAdmin, 500);
 }

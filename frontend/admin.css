@@ -1,0 +1,239 @@
+/* ── Admin panel ── */
+#admin-login {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+
+.admin-login-box {
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 320px;
+  text-align: center;
+}
+
+.admin-login-box h2 {
+  color: #fff;
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.admin-error {
+  color: #e94560;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+#admin-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 100vh;
+  background: #1a1a2e;
+  border-left: 1px solid rgba(255,255,255,0.1);
+  z-index: 2000;
+  overflow-y: auto;
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+
+.admin-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: #fff;
+}
+
+.admin-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.admin-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.admin-section h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.5);
+  margin: 0 0 8px;
+}
+
+.admin-list {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.admin-empty {
+  color: rgba(255,255,255,0.4);
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.admin-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+.admin-session-id {
+  font-family: monospace;
+  font-size: 11px;
+  cursor: pointer;
+  color: rgba(255,255,255,0.7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.admin-session-id:hover {
+  color: #fff;
+}
+
+.admin-session-info {
+  margin-bottom: 8px;
+}
+
+.admin-session-info div {
+  margin: 4px 0;
+}
+
+.admin-paint-list {
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.admin-paint-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.admin-paint-row:hover {
+  background: rgba(255,255,255,0.05);
+}
+
+.admin-paint-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.admin-paint-type {
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.admin-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #fff;
+  font-size: 13px;
+  margin-bottom: 8px;
+  outline: none;
+}
+
+.admin-input:focus {
+  border-color: rgba(255,255,255,0.3);
+}
+
+.admin-btn {
+  background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: rgba(255,255,255,0.85);
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.admin-btn:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+.admin-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.admin-btn-danger {
+  color: #e94560;
+  border-color: rgba(233, 69, 96, 0.3);
+}
+
+.admin-btn-danger:hover {
+  background: rgba(233, 69, 96, 0.15);
+}
+
+.admin-btn.active {
+  background: #e94560;
+  color: #fff;
+  border-color: #e94560;
+}
+
+.admin-btn-sm {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  padding: 3px 8px;
+  color: rgba(255,255,255,0.7);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.admin-btn-sm:hover {
+  background: rgba(255,255,255,0.12);
+}
+
+.admin-btn-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#map.region-select-mode {
+  cursor: crosshair !important;
+}
+
+@media (max-width: 600px) {
+  #admin-panel {
+    width: 100%;
+  }
+}
