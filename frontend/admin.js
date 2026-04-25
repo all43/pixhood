@@ -319,12 +319,18 @@ function showTokenPrompt(errorMsg) {
       ${errorMsg ? `<div class="admin-error">${errorMsg}</div>` : ''}
       <input type="password" id="admin-token-input" placeholder="Enter API key" class="admin-input" autofocus />
       <button class="admin-btn" id="admin-token-submit">Verify</button>
+      <button class="admin-btn admin-btn-cancel" id="admin-token-cancel">Cancel</button>
     </div>
   `;
   document.body.appendChild(overlay);
 
   const input = document.getElementById('admin-token-input');
   const btn = document.getElementById('admin-token-submit');
+
+  document.getElementById('admin-token-cancel').addEventListener('click', () => {
+    overlay.remove();
+    location.hash = '';
+  });
 
   const submit = async () => {
     const token = input.value.trim();
