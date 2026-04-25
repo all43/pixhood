@@ -402,6 +402,7 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname.startsWith('/admin/session/')) {
+    setCORS(res);
     const auth = await checkAdminAuth(req);
     if (!auth.ok) {
       res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
@@ -425,6 +426,7 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname === '/admin/flagged') {
+    setCORS(res);
     const auth = await checkAdminAuth(req);
     if (!auth.ok) {
       res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
@@ -444,6 +446,7 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'POST' && url.pathname === '/admin/revert') {
+    setCORS(res);
     const auth = await checkAdminAuth(req);
     if (!auth.ok) {
       res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
