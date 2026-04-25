@@ -162,12 +162,15 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(event.request.url);
 
-  // Cache API only supports http(s) GET requests
   if (event.request.method !== 'GET') {
     return;
   }
 
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return;
+  }
+
+  if (url.origin !== self.location.origin) {
     return;
   }
 
@@ -211,7 +214,7 @@ self.addEventListener('fetch', event => {
         }
         return response;
       }).catch(() => {
-        // Ignore fetch errors for offline fallbacks
+        return new Response('offline', { status: 503 });
       });
     })
   );
