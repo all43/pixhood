@@ -56,7 +56,7 @@ console.log('Building Pixhood frontend...');
 
 // Hash and copy static JS files
 const hashedJsFiles = {};
-const jsFiles = ['config.js', 'grid.js', 'pixels.js', 'map.js', 'app.js'];
+const jsFiles = ['config.js', 'grid.js', 'pixels.js', 'map.js', 'app.js', 'admin.js'];
 jsFiles.forEach(file => {
   const hashedName = copyWithHash(path.join(SRC_DIR, file), DIST_DIR);
   hashedJsFiles[file] = hashedName;
@@ -64,17 +64,21 @@ jsFiles.forEach(file => {
 });
 
 // Hash and copy CSS
-const cssHash = hashFile(path.join(SRC_DIR, 'style.css'));
-const hashedCssName = `style.${cssHash}.css`;
-fs.copyFileSync(
-  path.join(SRC_DIR, 'style.css'),
-  path.join(DIST_DIR, hashedCssName)
-);
-console.log(`  style.css → ${hashedCssName}`);
+const cssFiles = ['style.css', 'admin.css'];
+const hashedCssFiles = {};
+cssFiles.forEach(file => {
+  const hash = hashFile(path.join(SRC_DIR, file));
+  const hashedName = `${path.basename(file, '.css')}.${hash}.css`;
+  fs.copyFileSync(path.join(SRC_DIR, file), path.join(DIST_DIR, hashedName));
+  hashedCssFiles[file] = hashedName;
+  console.log(`  ${file} → ${hashedName}`);
+});
 
 // Rewrite index.html with hashed filenames
 let html = fs.readFileSync(path.join(SRC_DIR, 'index.html'), 'utf8');
-html = html.replace('style.css', hashedCssName);
+Object.entries(hashedCssFiles).forEach(([orig, hashed]) => {
+  html = html.replace(new RegExp(orig.replace('.', '\\.'), 'g'), hashed);
+});
 Object.entries(hashedJsFiles).forEach(([orig, hashed]) => {
   html = html.replace(new RegExp(orig.replace('.', '\\.'), 'g'), hashed);
 });
@@ -113,8 +117,8 @@ const iconHash = hashFile(path.join(PUBLIC_DIR, 'icon-512.png')).slice(0, 6);
 const precacheList = [
   '/',
   '/index.html',
-  `/${hashedCssName}`,
-  ...Object.values(hashedJsFiles).map(f => `/${f}`),
+  ...Object.values(hashedCssFiles).map(f => `/${f}`),
+  ...Object.values(hashedJsFiles).filter(f => !f.startsWith('admin')).map(f => `/${f}`),
   '/favicon.svg',
   '/manifest.json',
   '/icon-192.png',
