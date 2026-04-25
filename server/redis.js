@@ -267,6 +267,46 @@ async function unblockSession(sessionId) {
   await client.del(`blocked:${sessionId}`);
 }
 
+const ADMIN_ATTEMPTS_MAX = 5;
+const ADMIN_LOCKOUT_MS = 900000;
+
+function adminAttemptKey(ip) { return `admin_attempts:${ip}`; }
+
+async function checkAdminRateLimit(ip) {
+  const key = adminAttemptKey(ip);
+  const val = await client.get(key);
+  if (val && parseInt(val) >= ADMIN_ATTEMPTS_MAX) {
+    const ttl = await client.pTtl(key);
+    return { locked: true, retryAfter: Math.max(1, Math.ceil(ttl / 1000)) };
+  }
+  return { locked: false };
+}
+
+async function incrementAdminFailure(ip) {
+  const key = adminAttemptKey(ip);
+  const val = await client.incr(key);
+  if (val === 1) await client.pExpire(key, ADMIN_LOCKOUT_MS);
+}
+
+async function resetAdminFailure(ip) {
+  await client.del(adminAttemptKey(ip));
+}
+
+async function deletePixelsInRegion(n, s, e, w) {
+  const { pixels, staleKeys } = await getPixelsInViewport(n, s, e, w);
+  if (staleKeys.length > 0) await cleanupGeoIndex(staleKeys);
+
+  const deleted = [];
+  for (const pixel of pixels) {
+    await client.del(pixelKey(pixel.id));
+    await client.del(subpixelsKey(pixel.id));
+    await client.zRem(GEO_KEY, pixel.id);
+    deleted.push(pixel);
+  }
+
+  return deleted;
+}
+
 module.exports = {
   connect,
   savePixel,
@@ -289,5 +329,9 @@ module.exports = {
   revertSession,
   blockSession,
   isSessionBlocked,
-  unblockSession
+  unblockSession,
+  checkAdminRateLimit,
+  incrementAdminFailure,
+  resetAdminFailure,
+  deletePixelsInRegion
 };

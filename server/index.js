@@ -42,6 +42,17 @@ function getWSIP(ws) {
   return ws._clientIP || 'unknown';
 }
 
+async function checkAdminAuth(req) {
+  if (!ADMIN_API_KEY) return { ok: false };
+  const ip = getClientIP(req);
+  const lockout = await redis.checkAdminRateLimit(ip);
+  if (lockout.locked) return { ok: false, locked: true, retryAfter: lockout.retryAfter };
+  const auth = req.headers['authorization'] || '';
+  if (auth === `Bearer ${ADMIN_API_KEY}`) return { ok: true, ip };
+  await redis.incrementAdminFailure(ip);
+  return { ok: false };
+}
+
 function updateSessionPaint(sessionId, lat, lng) {
   let state = sessionStates.get(sessionId);
   if (!state) {
@@ -72,12 +83,6 @@ function addSessionFlag(sessionId, reason) {
 function countRecentFlags(sessionId, windowMs) {
   const state = sessionStates.get(sessionId);
   return S.countRecentFlags(state, windowMs, Date.now());
-}
-
-function checkAdminAuth(req) {
-  if (!ADMIN_API_KEY) return false;
-  const auth = req.headers['authorization'] || '';
-  return auth === `Bearer ${ADMIN_API_KEY}`;
 }
 
 function sendRateLimited(res, retryAfter) {
@@ -350,9 +355,10 @@ async function handleRequest(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/pixels') {
     setCORS(res);
-    if (!checkAdminAuth(req)) {
-      res.writeHead(401);
-      res.end('Unauthorized');
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
       return;
     }
     try {
@@ -374,9 +380,10 @@ async function handleRequest(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/pixels/child') {
     setCORS(res);
-    if (!checkAdminAuth(req)) {
-      res.writeHead(401);
-      res.end('Unauthorized');
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
       return;
     }
     try {
@@ -395,9 +402,10 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname.startsWith('/admin/session/')) {
-    if (!checkAdminAuth(req)) {
-      res.writeHead(401);
-      res.end('Unauthorized');
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
       return;
     }
     const sessionId = url.pathname.slice('/admin/session/'.length);
@@ -417,9 +425,10 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'GET' && url.pathname === '/admin/flagged') {
-    if (!checkAdminAuth(req)) {
-      res.writeHead(401);
-      res.end('Unauthorized');
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
       return;
     }
     try {
@@ -435,9 +444,10 @@ async function handleRequest(req, res) {
   }
 
   if (req.method === 'POST' && url.pathname === '/admin/revert') {
-    if (!checkAdminAuth(req)) {
-      res.writeHead(401);
-      res.end('Unauthorized');
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
       return;
     }
     try {
@@ -470,6 +480,68 @@ async function handleRequest(req, res) {
       res.writeHead(500);
       res.end('Internal server error');
     }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/verify') {
+    setCORS(res);
+    const ip = getClientIP(req);
+    const lockout = await redis.checkAdminRateLimit(ip);
+    if (lockout.locked) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Locked', retryAfter: lockout.retryAfter }));
+      return;
+    }
+    const auth = req.headers['authorization'] || '';
+    if (ADMIN_API_KEY && auth === `Bearer ${ADMIN_API_KEY}`) {
+      await redis.resetAdminFailure(ip);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ valid: true }));
+    } else {
+      await redis.incrementAdminFailure(ip);
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ valid: false }));
+    }
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/admin/region') {
+    setCORS(res);
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
+      return;
+    }
+    try {
+      const n = parseFloat(url.searchParams.get('n'));
+      const s = parseFloat(url.searchParams.get('s'));
+      const e = parseFloat(url.searchParams.get('e'));
+      const w = parseFloat(url.searchParams.get('w'));
+      if (isNaN(n) || isNaN(s) || isNaN(e) || isNaN(w)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid bounds' }));
+        return;
+      }
+      const deleted = await redis.deletePixelsInRegion(n, s, e, w);
+      for (const pixel of deleted) {
+        broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: pixel.id } });
+        broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, deleted: deleted.length }));
+    } catch (err) {
+      console.error('DELETE /admin/region error:', err);
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'OPTIONS') {
+    setCORS(res);
+    res.writeHead(204);
+    res.end();
     return;
   }
 
