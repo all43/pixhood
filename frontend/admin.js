@@ -347,6 +347,10 @@ function showTokenPrompt(errorMsg) {
       btn.disabled = false;
       btn.textContent = 'Verify';
       showTokenPrompt(`Too many attempts. Try again in ${result.retryAfter}s`);
+    } else if (result.error === 'Admin not configured') {
+      btn.disabled = false;
+      btn.textContent = 'Verify';
+      showTokenPrompt('Admin is not configured on this server');
     } else {
       btn.disabled = false;
       btn.textContent = 'Verify';

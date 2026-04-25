@@ -485,6 +485,11 @@ async function handleRequest(req, res) {
 
   if (req.method === 'POST' && url.pathname === '/admin/verify') {
     setCORS(res);
+    if (!ADMIN_API_KEY) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ valid: false, error: 'Admin not configured' }));
+      return;
+    }
     const ip = getClientIP(req);
     const lockout = await redis.checkAdminRateLimit(ip);
     if (lockout.locked) {
@@ -493,7 +498,7 @@ async function handleRequest(req, res) {
       return;
     }
     const auth = req.headers['authorization'] || '';
-    if (ADMIN_API_KEY && auth === `Bearer ${ADMIN_API_KEY}`) {
+    if (auth === `Bearer ${ADMIN_API_KEY}`) {
       await redis.resetAdminFailure(ip);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ valid: true }));
