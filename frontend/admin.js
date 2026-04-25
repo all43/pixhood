@@ -13,7 +13,18 @@ async function adminFetch(path, options = {}) {
   if (res.status === 401) {
     sessionStorage.removeItem(ADMIN_TOKEN_KEY);
     _adminToken = null;
-    initAdmin();
+    const panel = document.getElementById('admin-panel');
+    if (panel) panel.remove();
+    showTokenPrompt('Token expired or invalid — please re-enter');
+    return null;
+  }
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    _adminToken = null;
+    const panel = document.getElementById('admin-panel');
+    if (panel) panel.remove();
+    showTokenPrompt(`Too many failed attempts. Try again in ${data.retryAfter || 900}s`);
     return null;
   }
   return res;
@@ -342,9 +353,20 @@ function showTokenPrompt(errorMsg) {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 }
 
-function initAdmin() {
+async function initAdmin() {
   if (_adminToken) {
-    createAdminPanel();
+    const result = await verifyToken(_adminToken);
+    if (result.valid) {
+      createAdminPanel();
+    } else if (result.locked) {
+      _adminToken = null;
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      showTokenPrompt(`Too many failed attempts. Try again in ${result.retryAfter}s`);
+    } else {
+      _adminToken = null;
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      showTokenPrompt('Saved token is invalid — please re-enter');
+    }
   } else {
     showTokenPrompt();
   }
