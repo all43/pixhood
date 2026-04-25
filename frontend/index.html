@@ -57,12 +57,15 @@
 
   <!-- Admin (loaded dynamically on #admin) -->
   <script>
-    if (location.hash === '#admin') {
-      document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'admin.css' }));
+    function loadAdmin() {
+      if (document.getElementById('admin-css')) return;
+      document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'admin.css', id: 'admin-css' }));
       var _as = document.createElement('script');
       _as.src = 'admin.js';
       document.body.appendChild(_as);
     }
+    if (location.hash === '#admin') loadAdmin();
+    window.addEventListener('hashchange', function() { if (location.hash === '#admin') loadAdmin(); });
   </script>
 
   <!-- Service Worker registration (production only) -->
