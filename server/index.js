@@ -355,6 +355,12 @@ async function handlePaintChild(ws, msg) {
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost`);
 
+  if (req.method === 'GET' && url.pathname === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+
   if (req.method === 'OPTIONS') {
     setCORS(res);
     res.writeHead(204);
@@ -780,6 +786,18 @@ redis.connect().then(() => {
 
   server.listen(PORT, () => {
     console.log(`Pixhood running at http://localhost:${PORT}`);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('Shutting down...');
+    for (const client of wss.clients) {
+      client.close(1001, 'Server shutting down');
+    }
+    server.close(() => {
+      redis.disconnect();
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5000);
   });
 }).catch(err => {
   console.error('Failed to connect to Redis:', err);
