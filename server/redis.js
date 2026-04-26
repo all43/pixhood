@@ -101,6 +101,24 @@ async function getSubpixels(parentId) {
   return Object.values(raw).map(v => JSON.parse(v));
 }
 
+async function getSubpixelsMulti(parentIds) {
+  if (parentIds.length === 0) return [];
+  const pipeline = client.multi();
+  for (const id of parentIds) {
+    pipeline.hGetAll(subpixelsKey(id));
+    pipeline.expire(subpixelsKey(id), TTL);
+  }
+  const results = await pipeline.exec();
+  const childrenArrays = [];
+  for (let i = 0; i < parentIds.length; i++) {
+    const raw = results[i * 2];
+    childrenArrays.push(raw && Object.keys(raw).length > 0
+      ? Object.values(raw).map(v => JSON.parse(v))
+      : []);
+  }
+  return childrenArrays;
+}
+
 async function cleanupGeoIndex(staleKeys) {
   if (staleKeys.length === 0) return;
   await client.zRem(GEO_KEY, staleKeys);
@@ -340,6 +358,7 @@ module.exports = {
   deleteSubpixels,
   getPixelsInViewport,
   getSubpixels,
+  getSubpixelsMulti,
   cleanupGeoIndex,
   getPixelRaw,
   getSubpixelsAll,

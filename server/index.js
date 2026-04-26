@@ -395,12 +395,12 @@ async function handleRequest(req, res) {
         redis.cleanupGeoIndex(staleKeys).catch(err => console.error('Geo cleanup error:', err));
       }
 
-      const subPromises = pixels.map(async pixel => {
-        const children = await redis.getSubpixels(pixel.id);
-        return { ...pixel, hasChildren: children.length > 0, children: children.length > 0 ? children : undefined };
-      });
-
-      const result = await Promise.all(subPromises);
+      const childrenArrays = await redis.getSubpixelsMulti(pixels.map(p => p.id));
+      const result = pixels.map((pixel, i) => ({
+        ...pixel,
+        hasChildren: childrenArrays[i].length > 0,
+        children: childrenArrays[i].length > 0 ? childrenArrays[i] : undefined
+      }));
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
