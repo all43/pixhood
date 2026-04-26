@@ -3,6 +3,7 @@ let _adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
 let _regionMode = false;
 let _regionRect = null;
 let _regionStart = null;
+let _inspectMode = false;
 
 function adminHeaders() {
   return { 'Authorization': `Bearer ${_adminToken}`, 'Content-Type': 'application/json' };
@@ -40,11 +41,23 @@ async function verifyToken(token) {
       const data = await res.json();
       return { valid: false, locked: true, retryAfter: data.retryAfter };
     }
+    if (res.status === 403) {
+      const data = await res.json();
+      return { valid: false, error: data.error };
+    }
     const data = await res.json();
     return data;
   } catch {
     return { valid: false };
   }
+}
+
+function relativeTime(ts) {
+  const diff = Date.now() - ts;
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return `${Math.floor(diff / 86400000)}d ago`;
 }
 
 function createAdminPanel() {
@@ -56,33 +69,106 @@ function createAdminPanel() {
       <button class="admin-close" id="admin-close">&times;</button>
     </div>
     <div class="admin-section">
-      <h3>Flagged Sessions</h3>
-      <div id="admin-flagged-list" class="admin-list">Loading...</div>
-      <button class="admin-btn" id="admin-refresh-flagged">Refresh</button>
+      <h3>Tools</h3>
+      <div class="admin-tools">
+        <button class="admin-btn" id="admin-inspect-btn">Inspect Pixels</button>
+        <button class="admin-btn admin-btn-danger" id="admin-region-btn">Erase Region</button>
+      </div>
+      <div id="admin-inspect-info" class="admin-mode-info"></div>
+      <div id="admin-region-info" class="admin-mode-info"></div>
+    </div>
+    <div class="admin-section">
+      <h3>Sessions</h3>
+      <button class="admin-btn" id="admin-load-sessions">Load Active Sessions</button>
+      <div id="admin-sessions-list" class="admin-list"></div>
+    </div>
+    <div class="admin-section admin-section-collapsible">
+      <h3 class="admin-collapsible-toggle" id="admin-flagged-toggle">Flagged Sessions ▸</h3>
+      <div id="admin-flagged-list" class="admin-list admin-collapsible-content"></div>
     </div>
     <div class="admin-section">
       <h3>Session Inspector</h3>
-      <input type="text" id="admin-session-input" placeholder="Enter session ID" class="admin-input" />
+      <input type="text" id="admin-session-input" placeholder="Paste session ID" class="admin-input" />
       <button class="admin-btn" id="admin-lookup">Lookup</button>
       <div id="admin-session-detail" class="admin-list"></div>
-    </div>
-    <div class="admin-section">
-      <h3>Region Erase</h3>
-      <button class="admin-btn admin-btn-danger" id="admin-region-btn">Select Region</button>
-      <div id="admin-region-info"></div>
     </div>
   `;
   document.body.appendChild(panel);
 
   document.getElementById('admin-close').addEventListener('click', () => {
     panel.remove();
+    disableInspectMode();
+    if (_regionMode) toggleRegionMode();
   });
 
-  document.getElementById('admin-refresh-flagged').addEventListener('click', loadFlagged);
+  document.getElementById('admin-load-sessions').addEventListener('click', loadSessions);
   document.getElementById('admin-lookup').addEventListener('click', lookupSession);
+  document.getElementById('admin-inspect-btn').addEventListener('click', toggleInspectMode);
   document.getElementById('admin-region-btn').addEventListener('click', toggleRegionMode);
+  document.getElementById('admin-flagged-toggle').addEventListener('click', toggleFlaggedSection);
+}
 
-  loadFlagged();
+function toggleFlaggedSection() {
+  const content = document.getElementById('admin-flagged-list');
+  const toggle = document.getElementById('admin-flagged-toggle');
+  if (!content || !toggle) return;
+  const open = content.classList.toggle('visible');
+  toggle.textContent = `Flagged Sessions ${open ? '▾' : '▸'}`;
+  if (open && content.children.length === 0) loadFlagged();
+}
+
+async function loadSessions() {
+  const list = document.getElementById('admin-sessions-list');
+  const btn = document.getElementById('admin-load-sessions');
+  if (!list || !btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  list.textContent = '';
+
+  const res = await adminFetch('/admin/sessions');
+  if (!res) { btn.disabled = false; btn.textContent = 'Load Active Sessions'; return; }
+
+  if (!res.ok) {
+    list.textContent = 'Failed to load';
+    btn.disabled = false;
+    btn.textContent = 'Load Active Sessions';
+    return;
+  }
+
+  const { sessions } = await res.json();
+  btn.disabled = false;
+  btn.textContent = `Refresh (${sessions.length})`;
+
+  if (sessions.length === 0) {
+    list.innerHTML = '<div class="admin-empty">No active sessions</div>';
+    return;
+  }
+
+  list.innerHTML = sessions.map(s =>
+    `<div class="admin-session-row">
+      <span class="admin-session-id" data-session="${s.sessionId}">${s.sessionId}</span>
+      <span class="admin-session-meta">${s.paintCount} paints · ${relativeTime(s.lastPaintAt)}</span>
+      <button class="admin-btn-sm admin-locate-btn" data-lat="${s.lastLat}" data-lng="${s.lastLng}" title="Locate">⦿</button>
+    </div>`
+  ).join('');
+
+  list.querySelectorAll('[data-session]').forEach(el => {
+    el.addEventListener('click', () => {
+      const input = document.getElementById('admin-session-input');
+      if (input) { input.value = el.dataset.session; lookupSession(); }
+    });
+  });
+
+  list.querySelectorAll('.admin-locate-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const lat = parseFloat(btn.dataset.lat);
+      const lng = parseFloat(btn.dataset.lng);
+      if (!isNaN(lat) && !isNaN(lng) && typeof map !== 'undefined') {
+        map.setView([lat, lng], 20, { animate: true });
+      }
+    });
+  });
 }
 
 async function loadFlagged() {
@@ -133,10 +219,7 @@ async function loadFlagged() {
   list.querySelectorAll('[data-session]').forEach(el => {
     el.addEventListener('click', () => {
       const input = document.getElementById('admin-session-input');
-      if (input) {
-        input.value = el.dataset.session;
-        lookupSession();
-      }
+      if (input) { input.value = el.dataset.session; lookupSession(); }
     });
   });
 }
@@ -205,12 +288,115 @@ async function lookupSession() {
       if (res && res.ok) {
         revertBtn.textContent = 'Done';
         lookupSession();
-        loadFlagged();
+        const fl = document.getElementById('admin-flagged-list');
+        if (fl && fl.classList.contains('visible')) loadFlagged();
       } else {
         revertBtn.textContent = 'Failed';
       }
     });
   }
+}
+
+function toggleInspectMode() {
+  _inspectMode = !_inspectMode;
+  const btn = document.getElementById('admin-inspect-btn');
+  const info = document.getElementById('admin-inspect-info');
+  const mapEl = document.getElementById('map');
+
+  if (_inspectMode) {
+    if (_regionMode) toggleRegionMode();
+    btn.textContent = 'Exit Inspect';
+    btn.classList.add('active');
+    info.textContent = 'Click a pixel to see who painted it';
+    mapEl.classList.add('inspect-mode');
+    if (typeof map !== 'undefined') {
+      map.on('click', onInspectClick);
+    }
+  } else {
+    disableInspectMode();
+  }
+}
+
+function disableInspectMode() {
+  _inspectMode = false;
+  const btn = document.getElementById('admin-inspect-btn');
+  const info = document.getElementById('admin-inspect-info');
+  const mapEl = document.getElementById('map');
+  if (btn) { btn.textContent = 'Inspect Pixels'; btn.classList.remove('active'); }
+  if (info) info.textContent = '';
+  if (mapEl) mapEl.classList.remove('inspect-mode');
+  if (typeof map !== 'undefined') {
+    map.off('click', onInspectClick);
+  }
+  const popup = document.getElementById('admin-pixel-popup');
+  if (popup) popup.remove();
+}
+
+function onInspectClick(e) {
+  if (!_inspectMode) return;
+  const { lat, lng } = e.latlng;
+  const tile = snapToTile(lat, lng);
+  const id = tile.key;
+
+  const popup = document.getElementById('admin-pixel-popup');
+  if (popup) popup.remove();
+
+  const pixelLayer = pixelLayers[id];
+  if (!pixelLayer) return;
+
+  const bounds = pixelLayer.getBounds();
+  const point = map.latLngToContainerPoint(bounds.getCenter());
+
+  const el = document.createElement('div');
+  el.id = 'admin-pixel-popup';
+  el.className = 'admin-pixel-popup';
+  el.innerHTML = `<div class="admin-pixel-popup-loading">Loading...</div>`;
+  el.style.left = `${point.x}px`;
+  el.style.top = `${point.y - 10}px`;
+  document.getElementById('app').appendChild(el);
+
+  const vb = getViewportBounds();
+  const fb = computeFetchBounds(vb);
+  fetch(`${CONFIG.API_URL}/pixels?n=${fb.n}&s=${fb.s}&e=${fb.e}&w=${fb.w}`)
+    .then(r => r.json())
+    .then(pixels => {
+      const pixel = pixels.find(p => p.id === id);
+      if (!pixel) {
+        el.innerHTML = '<div class="admin-pixel-popup-loading">No data</div>';
+        return;
+      }
+      el.innerHTML = `
+        <div class="admin-pixel-popup-row">
+          <span class="admin-paint-color" style="background:${pixel.color}"></span>
+          <strong>${pixel.id}</strong>
+        </div>
+        <div class="admin-pixel-popup-row">
+          Session: <span class="admin-pixel-popup-session" data-session="${pixel.sessionId || 'unknown'}">${pixel.sessionId || 'unknown'}</span>
+        </div>
+        <div class="admin-pixel-popup-row">
+          Painted: ${pixel.paintedAt ? relativeTime(new Date(pixel.paintedAt).getTime()) : 'unknown'}
+        </div>
+        <div class="admin-pixel-popup-row">
+          Children: ${pixel.children ? pixel.children.length : 0}
+        </div>
+      `;
+      el.querySelector('[data-session]').addEventListener('click', () => {
+        const input = document.getElementById('admin-session-input');
+        if (input && pixel.sessionId) {
+          input.value = pixel.sessionId;
+          lookupSession();
+        }
+        el.remove();
+      });
+    })
+    .catch(() => {
+      el.innerHTML = '<div class="admin-pixel-popup-loading">Failed</div>';
+    });
+
+  setTimeout(() => {
+    const p = document.getElementById('admin-pixel-popup');
+    if (p) p.remove();
+  }, 8000);
 }
 
 function toggleRegionMode() {
@@ -220,6 +406,7 @@ function toggleRegionMode() {
   const mapEl = document.getElementById('map');
 
   if (_regionMode) {
+    if (_inspectMode) disableInspectMode();
     btn.textContent = 'Cancel Selection';
     btn.classList.add('active');
     info.textContent = 'Click and drag on the map to select a region';
@@ -231,7 +418,7 @@ function toggleRegionMode() {
       map.getContainer().addEventListener('mouseup', onRegionEnd);
     }
   } else {
-    btn.textContent = 'Select Region';
+    btn.textContent = 'Erase Region';
     btn.classList.remove('active');
     info.textContent = '';
     mapEl.classList.remove('region-select-mode');

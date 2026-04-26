@@ -292,6 +292,32 @@ async function resetAdminFailure(ip) {
   await client.del(adminAttemptKey(ip));
 }
 
+async function getActiveSessions() {
+  const sessions = [];
+  let cursor = 0;
+  do {
+    const reply = await client.scan(cursor, { MATCH: 'paintlog:*', COUNT: 100 });
+    cursor = reply.cursor;
+    for (const key of reply.keys) {
+      const sessionId = key.replace('paintlog:', '');
+      const entries = await client.zRangeWithScores(key, -1, -1);
+      const count = await client.zCard(key);
+      if (entries.length > 0) {
+        const latest = JSON.parse(entries[0].value);
+        sessions.push({
+          sessionId,
+          paintCount: count,
+          lastPaintAt: entries[0].score,
+          lastLat: latest.lat || null,
+          lastLng: latest.lng || null
+        });
+      }
+    }
+  } while (cursor !== 0);
+  sessions.sort((a, b) => b.lastPaintAt - a.lastPaintAt);
+  return sessions;
+}
+
 async function deletePixelsInRegion(n, s, e, w) {
   const { pixels, staleKeys } = await getPixelsInViewport(n, s, e, w);
   if (staleKeys.length > 0) await cleanupGeoIndex(staleKeys);
@@ -333,5 +359,6 @@ module.exports = {
   checkAdminRateLimit,
   incrementAdminFailure,
   resetAdminFailure,
-  deletePixelsInRegion
+  deletePixelsInRegion,
+  getActiveSessions
 };

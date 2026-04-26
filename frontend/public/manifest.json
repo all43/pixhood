@@ -6,7 +6,7 @@
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#16213e",
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "related_applications": [
     { "platform": "webapp", "url": "https://pixhood.art/manifest.json" }
   ],

@@ -81,6 +81,22 @@
   margin: 0 0 8px;
 }
 
+.admin-tools {
+  display: flex;
+  gap: 8px;
+}
+
+.admin-tools .admin-btn {
+  flex: 1;
+}
+
+.admin-mode-info {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  margin-top: 6px;
+  min-height: 16px;
+}
+
 .admin-list {
   max-height: 200px;
   overflow-y: auto;
@@ -96,7 +112,7 @@
 .admin-session-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   padding: 6px 0;
   border-bottom: 1px solid rgba(255,255,255,0.05);
 }
@@ -109,11 +125,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 200px;
+  max-width: 140px;
+  flex-shrink: 0;
 }
 
 .admin-session-id:hover {
   color: #fff;
+}
+
+.admin-session-meta {
+  font-size: 10px;
+  color: rgba(255,255,255,0.4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.admin-locate-btn {
+  flex-shrink: 0;
+  font-size: 14px !important;
+  line-height: 1;
+  padding: 2px 6px !important;
 }
 
 .admin-session-info {
@@ -202,6 +235,12 @@
   background: rgba(233, 69, 96, 0.15);
 }
 
+.admin-btn.active {
+  background: #e94560;
+  color: #fff;
+  border-color: #e94560;
+}
+
 .admin-btn-cancel {
   margin-top: 6px;
   color: rgba(255,255,255,0.5);
@@ -210,12 +249,6 @@
 
 .admin-btn-cancel:hover {
   color: rgba(255,255,255,0.8);
-}
-
-.admin-btn.active {
-  background: #e94560;
-  color: #fff;
-  border-color: #e94560;
 }
 
 .admin-btn-sm {
@@ -238,6 +271,66 @@
   cursor: not-allowed;
 }
 
+.admin-collapsible-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.admin-collapsible-toggle:hover {
+  color: rgba(255,255,255,0.7);
+}
+
+.admin-collapsible-content {
+  display: none;
+}
+
+.admin-collapsible-content.visible {
+  display: block;
+}
+
+/* ── Inspect mode ── */
+#map.inspect-mode {
+  cursor: help !important;
+}
+
+.admin-pixel-popup {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.85);
+  z-index: 2500;
+  pointer-events: auto;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+.admin-pixel-popup-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 0;
+}
+
+.admin-pixel-popup-session {
+  color: #4fc3f7;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.admin-pixel-popup-session:hover {
+  text-decoration: underline;
+}
+
+.admin-pixel-popup-loading {
+  color: rgba(255,255,255,0.5);
+}
+
+/* ── Region select ── */
 #map.region-select-mode {
   cursor: crosshair !important;
 }

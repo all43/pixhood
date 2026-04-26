@@ -287,7 +287,8 @@ async function handleLocate() {
 
 function handleMapClick(e) {
   if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
-  if (document.getElementById('map').classList.contains('region-select-mode')) return;
+  const mapEl = document.getElementById('map');
+  if (mapEl.classList.contains('region-select-mode') || mapEl.classList.contains('inspect-mode')) return;
 
   const { lat, lng } = e.latlng;
   const color = getSelectedColor();

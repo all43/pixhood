@@ -425,6 +425,26 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/admin/sessions') {
+    setCORS(res);
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
+      return;
+    }
+    try {
+      const sessions = await redis.getActiveSessions();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions }));
+    } catch (err) {
+      console.error('GET /admin/sessions error:', err);
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/admin/flagged') {
     setCORS(res);
     const auth = await checkAdminAuth(req);
