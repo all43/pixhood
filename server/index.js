@@ -681,7 +681,6 @@ wss.on('connection', (ws, req) => {
   }
 
   const newSessionId = 'sess_' + crypto.randomBytes(16).toString('hex');
-  ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_SESSION, sessionId: newSessionId }));
 
   console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount + 1})`);
 
@@ -692,7 +691,8 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PONG }));
       } else if (msg.type === CONSTANTS.WS_TYPE_VIEWPORT && msg.bounds) {
         ws.viewport = msg.bounds;
-        const sid = (msg.sessionId && SESSION_ID_RE.test(msg.sessionId)) ? msg.sessionId : newSessionId;
+        const useClientSession = msg.sessionId && SESSION_ID_RE.test(msg.sessionId);
+        const sid = useClientSession ? msg.sessionId : newSessionId;
         const prevSid = ws.sessionId;
         ws.sessionId = sid;
         if (prevSid !== sid) {
@@ -706,6 +706,9 @@ wss.on('connection', (ws, req) => {
             }
           }
           sessionRefCounts.set(sid, (sessionRefCounts.get(sid) || 0) + 1);
+        }
+        if (!useClientSession) {
+          ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_SESSION, sessionId: newSessionId }));
         }
         updateSessionViewport(sid, msg.bounds, msg.zoom);
       } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_PARENT) {
