@@ -49,6 +49,8 @@ pixhood/
 │   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
 │   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
 │   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
+│   ├── admin.js       # Admin panel (loaded dynamically on #admin): token auth, sessions, inspect, region erase
+│   ├── admin.css      # Admin panel styles (loaded dynamically on #admin)
 │   ├── favicon.svg
 │   ├── build.js       # Build script: hashes files, generates SW
 │   ├── wrangler.toml  # Cloudflare Pages configuration
@@ -145,6 +147,7 @@ No user accounts — sessions are anonymous UUIDs in `localStorage`.
 | `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (INCR + EXPIRE) |
 | `flagged_sessions` | Set | — | Session IDs flagged for suspicious activity |
 | `blocked:<sessionId>` | String | 1h | Blocked session (auto-revert triggered) |
+| `admin_attempts:<ip>` | String | 15min | Failed admin auth attempt counter |
 
 Stale geo entries (pixel key expired) cleaned lazily on each viewport query.
 
@@ -157,9 +160,12 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` �
 | `GET` | `/pixels?n=&s=&e=&w=` | Viewport query: pixels in bounding box. Always includes children. |
 | `POST` | `/pixels` | Save parent pixel (admin only). Erases children, broadcasts. |
 | `POST` | `/pixels/child` | Save child pixel (admin only). Broadcasts. |
+| `POST` | `/admin/verify` | Verify admin API key. Rate limited: 5 attempts per IP, 15min lockout. |
+| `GET` | `/admin/sessions` | List active sessions with paint count and last location (requires auth). Uses `SCAN paintlog:*`. |
 | `GET` | `/admin/session/:sessionId` | Get paint log for a session (requires auth) |
 | `GET` | `/admin/flagged` | List flagged sessions (requires auth) |
 | `POST` | `/admin/revert` | Revert all paints by a session (requires auth) |
+| `DELETE` | `/admin/region?n=&s=&e=&w=` | Erase all pixels in bounding box (requires auth). Broadcasts deletions. |
 | `WS` | WebSocket connection | Real-time updates, painting, ping/pong, viewport subscription |
 
 ### WebSocket protocol
@@ -262,7 +268,22 @@ Max 10 concurrent WS connections per IP (tracked via `wss.clients` iteration per
 
 ### Admin auth
 
-All `/admin/*` endpoints and HTTP paint endpoints (`POST /pixels`, `POST /pixels/child`) require `Authorization: Bearer <ADMIN_API_KEY>` header.
+All `/admin/*` endpoints and HTTP paint endpoints (`POST /pixels`, `POST /pixels/child`) require `Authorization: Bearer <ADMIN_API_KEY>` header. Failed auth increments `admin_attempts:<ip>` counter. After 5 failures, IP is locked out for 15 minutes.
+
+`POST /admin/verify` validates the token without side effects. Returns 403 if `ADMIN_API_KEY` is not configured.
+
+### Admin panel
+
+Activated via URL hash `#admin`. `admin.js` and `admin.css` are loaded dynamically (not fetched by regular users). Token stored in `sessionStorage` (cleared on tab close).
+
+**Tools:**
+- **Inspect mode**: Click any pixel to see its session ID, color, and paint time. Session ID links to the inspector. Mutually exclusive with region erase mode.
+- **Region erase**: Draw rectangle on map, confirm, deletes all pixels in bounds via `DELETE /admin/region`. Broadcasts `deletePixel` for each.
+- **Sessions list**: "Load Active Sessions" button triggers `SCAN paintlog:*` in Redis. Shows paint count, relative time, locate button (pans map to last paint location at zoom 20).
+- **Session inspector**: Enter or click a session ID to view paint log with click-to-pan. "Revert All Paints" button calls `POST /admin/revert`.
+- **Flagged sessions**: Collapsible section, shows sessions flagged for suspicious activity with one-click revert.
+
+No IP addresses shown anywhere in the admin UI.
 
 ## Out of scope (prototype)
 
