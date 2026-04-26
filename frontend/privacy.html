@@ -78,7 +78,10 @@
     <p>Each browser is assigned a random UUID stored in your browser's localStorage. This identifier is used solely for coordinating your paint actions in real time. It is not personal data and cannot be traced back to you.</p>
 
     <h3>Geolocation</h3>
-    <p>If you grant permission, your browser's Geolocation API is used to center the map on your position. Your precise location coordinates are processed <strong>entirely in your browser</strong> and are never transmitted to our server. The server only receives map coordinates of pixels you paint — these represent areas on a public map, not your physical location.</p>
+    <p>If you grant permission, your browser's Geolocation API is used to center the map on your position. The geolocation itself stays in your browser — but the map area you view and the pixels you paint involve coordinates sent to our server (see below). We do not track your real-time position beyond what is needed to show you the map.</p>
+
+    <h3>Map Viewport and Pixel Coordinates</h3>
+    <p>To load and display pixels, the app sends your current map viewport bounds (latitude/longitude rectangle) to the server via HTTP and WebSocket. When you paint a pixel, its color and map coordinates are also sent. These coordinates represent areas on a public map — not personal location data — and are inherently tied to the content you create. They are not used to track or profile you.</p>
 
     <h3>Painted Pixels</h3>
     <p>Pixel colors and their map coordinates are stored server-side with a 24-hour expiry. After 24 hours they are automatically deleted. Pixels are public and visible to all users.</p>
