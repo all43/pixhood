@@ -48,13 +48,29 @@ function setCORS(res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
+const MAX_BODY_LENGTH = 10 * 1024;
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
-    req.on('data', chunk => (body += chunk));
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > MAX_BODY_LENGTH) {
+        req.destroy();
+        reject(new Error('Body too large'));
+        return;
+      }
+      body += chunk;
+    });
     req.on('end', () => resolve(body));
     req.on('error', reject);
   });
+}
+
+function sendTooLarge(res) {
+  res.writeHead(413, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Payload too large' }));
 }
 
 function getClientIP(req) {
@@ -408,6 +424,7 @@ async function handleRequest(req, res) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
+      if (err.message === 'Body too large') { sendTooLarge(res); return; }
       console.error('POST /pixels error:', err);
       res.writeHead(400);
       res.end('Bad request');
@@ -431,6 +448,7 @@ async function handleRequest(req, res) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
+      if (err.message === 'Body too large') { sendTooLarge(res); return; }
       console.error('POST /pixels/child error:', err);
       res.writeHead(400);
       res.end('Bad request');
@@ -536,6 +554,7 @@ async function handleRequest(req, res) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, reverted: result.reverted }));
     } catch (err) {
+      if (err.message === 'Body too large') { sendTooLarge(res); return; }
       console.error('POST /admin/revert error:', err);
       res.writeHead(500);
       res.end('Internal server error');
@@ -629,6 +648,7 @@ function isOriginAllowed(origin) {
 const server = http.createServer(handleRequest);
 const wss = new WebSocketServer({
   server,
+  maxPayload: 10 * 1024,
   verifyClient: (info, cb) => {
     if (!isOriginAllowed(info.origin || info.req.headers.origin)) {
       cb(false, 403, 'Origin not allowed');
