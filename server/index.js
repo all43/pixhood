@@ -614,8 +614,29 @@ async function handleRequest(req, res) {
   res.end('Not found');
 }
 
+function isOriginAllowed(origin) {
+  if (!origin) return false;
+  try {
+    const { hostname } = new URL(origin);
+    if (hostname === 'pixhood.art' || hostname.endsWith('.pixhood.art')) return true;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 const server = http.createServer(handleRequest);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({
+  server,
+  verifyClient: (info, cb) => {
+    if (!isOriginAllowed(info.origin || info.req.headers.origin)) {
+      cb(false, 403, 'Origin not allowed');
+      return;
+    }
+    cb(true);
+  }
+});
 
 function inBounds(lat, lng, b) {
   return lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e;
