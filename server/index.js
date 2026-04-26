@@ -179,8 +179,6 @@ async function handlePaintParent(ws, msg) {
     previousChildren: prevChildren
   });
 
-  updateSessionPaint(sessionId, pixel.lat, pixel.lng);
-
   const autoRevertReason = await shouldAutoRevert(sessionId, pixel.lat, pixel.lng);
   if (autoRevertReason) {
     console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
@@ -208,6 +206,8 @@ async function handlePaintParent(ws, msg) {
       addSessionFlag(sessionId, reason);
     }
   }
+
+  updateSessionPaint(sessionId, pixel.lat, pixel.lng);
 
   await redis.deleteSubpixels(pixel.id);
   await redis.savePixel(pixel);
@@ -264,8 +264,6 @@ async function handlePaintChild(ws, msg) {
     previousSubY: prevChild ? prevChild.subY : null
   });
 
-  updateSessionPaint(sessionId, childPixel.lat, childPixel.lng);
-
   const autoRevertReason = await shouldAutoRevert(sessionId, childPixel.lat, childPixel.lng);
   if (autoRevertReason) {
     console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
@@ -293,6 +291,8 @@ async function handlePaintChild(ws, msg) {
       addSessionFlag(sessionId, reason);
     }
   }
+
+  updateSessionPaint(sessionId, childPixel.lat, childPixel.lng);
 
   const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
   broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } });
