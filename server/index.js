@@ -1,5 +1,6 @@
 const http = require('http');
 const crypto = require('crypto');
+const { timingSafeEqual } = crypto;
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
 const WS_TYPES = require('./shared/ws-types');
@@ -85,13 +86,18 @@ function getWSIP(ws) {
   return ws._clientIP || 'unknown';
 }
 
+function timingSafeEqualStr(a, b) {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
 async function checkAdminAuth(req) {
   if (!ADMIN_API_KEY) return { ok: false };
   const ip = getClientIP(req);
   const lockout = await redis.checkAdminRateLimit(ip);
   if (lockout.locked) return { ok: false, locked: true, retryAfter: lockout.retryAfter };
   const auth = req.headers['authorization'] || '';
-  if (auth === `Bearer ${ADMIN_API_KEY}`) return { ok: true, ip };
+  if (timingSafeEqualStr(auth, `Bearer ${ADMIN_API_KEY}`)) return { ok: true, ip };
   await redis.incrementAdminFailure(ip);
   return { ok: false };
 }
@@ -577,7 +583,7 @@ async function handleRequest(req, res) {
       return;
     }
     const auth = req.headers['authorization'] || '';
-    if (auth === `Bearer ${ADMIN_API_KEY}`) {
+    if (timingSafeEqualStr(auth, `Bearer ${ADMIN_API_KEY}`)) {
       await redis.resetAdminFailure(ip);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ valid: true }));
