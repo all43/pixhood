@@ -100,8 +100,7 @@ function addSessionFlag(state, reason, now) {
 function countRecentFlags(state, windowMs, now) {
   if (!state) return 0;
   const cutoff = now - windowMs;
-  state.flags = state.flags.filter(f => f.time >= cutoff);
-  return state.flags.length;
+  return state.flags.filter(f => f.time >= cutoff).length;
 }
 
 module.exports = {
