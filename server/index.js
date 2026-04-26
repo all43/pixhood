@@ -40,6 +40,7 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || null;
 
 const sessionStates = new Map();
+const sessionRefCounts = new Map();
 
 function setCORS(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
@@ -671,7 +672,20 @@ wss.on('connection', (ws, req) => {
       } else if (msg.type === CONSTANTS.WS_TYPE_VIEWPORT && msg.bounds) {
         ws.viewport = msg.bounds;
         const sid = (msg.sessionId && SESSION_ID_RE.test(msg.sessionId)) ? msg.sessionId : newSessionId;
+        const prevSid = ws.sessionId;
         ws.sessionId = sid;
+        if (prevSid !== sid) {
+          if (prevSid) {
+            const prevCount = sessionRefCounts.get(prevSid) - 1;
+            if (prevCount <= 0) {
+              sessionRefCounts.delete(prevSid);
+              sessionStates.delete(prevSid);
+            } else {
+              sessionRefCounts.set(prevSid, prevCount);
+            }
+          }
+          sessionRefCounts.set(sid, (sessionRefCounts.get(sid) || 0) + 1);
+        }
         updateSessionViewport(sid, msg.bounds, msg.zoom);
       } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_PARENT) {
         handlePaintParent(ws, msg).catch(err => {
@@ -693,7 +707,16 @@ wss.on('connection', (ws, req) => {
 
   ws.on('error', err => console.error('WS client error:', err));
   ws.on('close', () => {
-    if (ws.sessionId) sessionStates.delete(ws.sessionId);
+    const sid = ws.sessionId;
+    if (sid) {
+      const count = sessionRefCounts.get(sid) - 1;
+      if (count <= 0) {
+        sessionRefCounts.delete(sid);
+        sessionStates.delete(sid);
+      } else {
+        sessionRefCounts.set(sid, count);
+      }
+    }
     console.log(`WS client disconnected (${getConnectedCount()} total)`);
   });
 });
