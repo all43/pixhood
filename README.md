@@ -10,7 +10,8 @@
 
 ## Screenshots
 
-<!-- TODO: map view with painted pixels -->
+![Map view with painted pixels](docs/screenshots/home_mobile.png)
+
 <!-- TODO: sub-grid zoom (level 21+) -->
 <!-- TODO: color picker + welcome screen -->
 
