@@ -61,6 +61,7 @@ const CONFIG = {
   WS_TYPE_PING: 'ping',
   WS_TYPE_PONG: 'pong',
   WS_TYPE_VIEWPORT: 'viewport',
+  WS_TYPE_SESSION: 'session',
   WS_TYPE_PIXEL: 'pixel',
   WS_TYPE_CHILD: 'child',
   WS_TYPE_CLEAR_CHILDREN: 'clearChildren',

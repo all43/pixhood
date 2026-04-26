@@ -5,6 +5,18 @@ let _regionRect = null;
 let _regionStart = null;
 let _inspectMode = false;
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function safeColor(c) {
+  return /^#[0-9a-f]{6}$/i.test(c) ? c : '#666666';
+}
+
 function adminHeaders() {
   return { 'Authorization': `Bearer ${_adminToken}`, 'Content-Type': 'application/json' };
 }
@@ -146,7 +158,7 @@ async function loadSessions() {
 
   list.innerHTML = sessions.map(s =>
     `<div class="admin-session-row">
-      <span class="admin-session-id" data-session="${s.sessionId}">${s.sessionId}</span>
+      <span class="admin-session-id" data-session="${escapeHtml(s.sessionId)}">${escapeHtml(s.sessionId)}</span>
       <span class="admin-session-meta">${s.paintCount} paints · ${relativeTime(s.lastPaintAt)}</span>
       <button class="admin-btn-sm admin-locate-btn" data-lat="${s.lastLat}" data-lng="${s.lastLng}" title="Locate">⦿</button>
     </div>`
@@ -192,8 +204,8 @@ async function loadFlagged() {
 
   list.innerHTML = sessions.map(sid =>
     `<div class="admin-session-row">
-      <span class="admin-session-id" data-session="${sid}">${sid}</span>
-      <button class="admin-btn-sm" data-revert="${sid}">Revert</button>
+      <span class="admin-session-id" data-session="${escapeHtml(sid)}">${escapeHtml(sid)}</span>
+      <button class="admin-btn-sm" data-revert="${escapeHtml(sid)}">Revert</button>
     </div>`
   ).join('');
 
@@ -245,7 +257,7 @@ async function lookupSession() {
   const data = await res.json();
 
   let html = `<div class="admin-session-info">
-    <div>Session: <strong>${data.sessionId}</strong></div>
+    <div>Session: <strong>${escapeHtml(data.sessionId)}</strong></div>
     <div>Flagged: ${data.flagged ? 'Yes' : 'No'} | Blocked: ${data.blocked ? 'Yes' : 'No'}</div>
     <div>Paints: ${data.paints.length}</div>
   </div>`;
@@ -254,13 +266,13 @@ async function lookupSession() {
     html += '<div class="admin-paint-list">' +
       data.paints.map(p =>
         `<div class="admin-paint-row" data-lat="${p.lat}" data-lng="${p.lng}">
-          <span class="admin-paint-color" style="background:${p.color || '#666'}"></span>
-          <span>${p.tileKey || p.childKey || 'unknown'}</span>
-          <span class="admin-paint-type">${p.type}</span>
+          <span class="admin-paint-color" style="background:${safeColor(p.color)}"></span>
+          <span>${escapeHtml(p.tileKey || p.childKey || 'unknown')}</span>
+          <span class="admin-paint-type">${escapeHtml(p.type)}</span>
         </div>`
       ).join('') +
       '</div>';
-    html += `<button class="admin-btn admin-btn-danger" data-revert-session="${sid}">Revert All Paints</button>`;
+    html += `<button class="admin-btn admin-btn-danger" data-revert-session="${escapeHtml(sid)}">Revert All Paints</button>`;
   }
 
   detail.innerHTML = html;
@@ -367,11 +379,11 @@ function onInspectClick(e) {
       }
       el.innerHTML = `
         <div class="admin-pixel-popup-row">
-          <span class="admin-paint-color" style="background:${pixel.color}"></span>
-          <strong>${pixel.id}</strong>
+          <span class="admin-paint-color" style="background:${safeColor(pixel.color)}"></span>
+          <strong>${escapeHtml(pixel.id)}</strong>
         </div>
         <div class="admin-pixel-popup-row">
-          Session: <span class="admin-pixel-popup-session" data-session="${pixel.sessionId || 'unknown'}">${pixel.sessionId || 'unknown'}</span>
+          Session: <span class="admin-pixel-popup-session" data-session="${escapeHtml(pixel.sessionId || 'unknown')}">${escapeHtml(pixel.sessionId || 'unknown')}</span>
         </div>
         <div class="admin-pixel-popup-row">
           Painted: ${pixel.paintedAt ? relativeTime(new Date(pixel.paintedAt).getTime()) : 'unknown'}

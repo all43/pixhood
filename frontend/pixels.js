@@ -1,10 +1,7 @@
+let _sessionId = localStorage.getItem('pixhood_session') || null;
+
 function getSessionId() {
-  let id = localStorage.getItem('pixhood_session');
-  if (!id) {
-    id = 'sess_' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
-    localStorage.setItem('pixhood_session', id);
-  }
-  return id;
+  return _sessionId;
 }
 
 let _loadedBounds = null;
@@ -126,7 +123,8 @@ function sendViewport(viewportBounds) {
   if (!_ws || _ws.readyState !== 1) return;
   const fb = computeFetchBounds(viewportBounds);
   const zoom = typeof getCurrentZoom === 'function' ? getCurrentZoom() : 0;
-  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, sessionId: getSessionId(), zoom }));
+  const sid = getSessionId();
+  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, ...(sid ? { sessionId: sid } : {}), zoom }));
 }
 
 let _onViewportReady = null;
@@ -145,12 +143,12 @@ function _openWS() {
     const sid = getSessionId();
     const zoom = typeof getCurrentZoom === 'function' ? getCurrentZoom() : 0;
     if (_loadedBounds) {
-      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: _loadedBounds, sessionId: sid, zoom }));
+      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: _loadedBounds, ...(sid ? { sessionId: sid } : {}), zoom }));
     } else if (_onViewportReady) {
       const bounds = _onViewportReady();
       if (bounds) {
         const fb = computeFetchBounds(bounds);
-        _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, sessionId: sid, zoom }));
+        _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, ...(sid ? { sessionId: sid } : {}), zoom }));
       }
     }
   });
@@ -163,6 +161,11 @@ function _openWS() {
       if (msg.type === CONFIG.WS_TYPE_CLEAR_CHILDREN && _onChild) _onChild(msg.data, msg.type);
       if (msg.type === CONFIG.WS_TYPE_DELETE_PIXEL && _onDelete) _onDelete(msg.data);
       if (msg.type === CONFIG.WS_TYPE_PONG) return;
+      if (msg.type === CONFIG.WS_TYPE_SESSION) {
+        _sessionId = msg.sessionId;
+        localStorage.setItem('pixhood_session', msg.sessionId);
+        return;
+      }
       if (msg.type === CONFIG.WS_TYPE_PAINT_ACK) {
         const timer = _pendingPaints.get(msg.id);
         if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }

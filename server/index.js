@@ -1,4 +1,5 @@
 const http = require('http');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
 const WS_TYPES = require('./shared/ws-types');
@@ -8,6 +9,31 @@ const CONSTANTS = {
   WS_OPEN: 1,
   ...WS_TYPES
 };
+
+const COLOR_RE = /^#[0-9a-f]{6}$/;
+const TILE_KEY_RE = /^-?\d+_-?\d+$/;
+const SESSION_ID_RE = /^sess_[a-z0-9]{2,50}$/;
+
+function validatePaintParent(msg) {
+  const { tileKey, lat, lng, color, id } = msg;
+  if (!tileKey || !TILE_KEY_RE.test(tileKey)) return false;
+  if (typeof lat !== 'number' || typeof lng !== 'number' || lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  if (!color || !COLOR_RE.test(color)) return false;
+  if (id != null && (typeof id !== 'number' || id <= 0)) return false;
+  return true;
+}
+
+function validatePaintChild(msg) {
+  const { parentId, tileKey, subX, subY, lat, lng, color, id } = msg;
+  if (!parentId || !TILE_KEY_RE.test(parentId)) return false;
+  if (!tileKey || !TILE_KEY_RE.test(tileKey)) return false;
+  if (typeof subX !== 'number' || !Number.isInteger(subX) || subX < 0 || subX >= 16) return false;
+  if (typeof subY !== 'number' || !Number.isInteger(subY) || subY < 0 || subY >= 16) return false;
+  if (typeof lat !== 'number' || typeof lng !== 'number' || lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  if (!color || !COLOR_RE.test(color)) return false;
+  if (id != null && (typeof id !== 'number' || id <= 0)) return false;
+  return true;
+}
 
 const PORT = process.env.PORT || 3000;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
@@ -149,6 +175,11 @@ async function handlePaintParent(ws, msg) {
     return;
   }
 
+  if (!validatePaintParent(msg)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'invalid_input' }));
+    return;
+  }
+
   const { tileKey, lat, lng, color } = msg;
   const pixel = {
     id: tileKey,
@@ -232,6 +263,11 @@ async function handlePaintChild(ws, msg) {
   const retryAfter = await checkWriteRateLimits(ip, sessionId);
   if (retryAfter) {
     ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'rate_limited', retryAfter }));
+    return;
+  }
+
+  if (!validatePaintChild(msg)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'invalid_input' }));
     return;
   }
 
@@ -622,6 +658,9 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
+  const newSessionId = 'sess_' + crypto.randomBytes(16).toString('hex');
+  ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_SESSION, sessionId: newSessionId }));
+
   console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount + 1})`);
 
   ws.on('message', raw => {
@@ -631,10 +670,9 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PONG }));
       } else if (msg.type === CONSTANTS.WS_TYPE_VIEWPORT && msg.bounds) {
         ws.viewport = msg.bounds;
-        if (msg.sessionId) {
-          ws.sessionId = msg.sessionId;
-          updateSessionViewport(msg.sessionId, msg.bounds, msg.zoom);
-        }
+        const sid = (msg.sessionId && SESSION_ID_RE.test(msg.sessionId)) ? msg.sessionId : newSessionId;
+        ws.sessionId = sid;
+        updateSessionViewport(sid, msg.bounds, msg.zoom);
       } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_PARENT) {
         handlePaintParent(ws, msg).catch(err => {
           console.error('handlePaintParent error:', err);
