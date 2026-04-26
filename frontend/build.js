@@ -124,7 +124,6 @@ const iconHash = hashFile(path.join(PUBLIC_DIR, 'icon-512.png')).slice(0, 6);
 const precacheList = [
   '/',
   '/index.html',
-  '/privacy.html',
   ...Object.values(hashedCssFiles).map(f => `/${f}`),
   ...Object.values(hashedJsFiles).filter(f => !f.startsWith('admin')).map(f => `/${f}`),
   '/favicon.svg',
@@ -194,6 +193,26 @@ self.addEventListener('fetch', event => {
         .catch(() => new Response(JSON.stringify({ error: 'offline' }), {
           headers: { 'Content-Type': 'application/json' }
         }))
+    );
+    return;
+  }
+
+  // Network-first for navigation requests to avoid redirected-response errors
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          const body = response.redirected ? response.body : null;
+          if (response.redirected) {
+            return new Response(body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers
+            });
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then(cached => cached || new Response('offline', { status: 503 })))
     );
     return;
   }
