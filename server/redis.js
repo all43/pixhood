@@ -174,6 +174,36 @@ async function checkIPRateLimit(ip, prefix, limit, windowMs) {
   return { allowed: true };
 }
 
+async function checkWriteRateLimitsBatch(ip, sessionId, ipWriteMax, ipWriteWindowMs, burstWindowMs, burstMax, sustainedWindowMs, sustainedMax) {
+  const ipKey = rateLimitKey('write', ip);
+  const paintKey = paintLogKey(sessionId);
+  const now = Date.now();
+
+  const pipeline = client.multi();
+  pipeline.incr(ipKey);
+  pipeline.pExpire(ipKey, ipWriteWindowMs);
+  pipeline.zRemRangeByScore(paintKey, '-inf', now - PAINT_LOG_TTL * 1000);
+  pipeline.zCount(paintKey, now - burstWindowMs, '+inf');
+  pipeline.zCount(paintKey, now - sustainedWindowMs, '+inf');
+
+  const results = await pipeline.exec();
+  const ipCount = results[0];
+  const burstCount = results[3];
+  const sustainedCount = results[4];
+
+  if (ipCount > ipWriteMax) {
+    const ttl = await client.pTtl(ipKey);
+    return { blocked: true, retryAfter: Math.max(1, Math.ceil(ttl / 1000)) };
+  }
+  if (burstCount > burstMax) {
+    return { blocked: true, retryAfter: Math.ceil(burstWindowMs / 1000) };
+  }
+  if (sustainedCount > sustainedMax) {
+    return { blocked: true, retryAfter: Math.ceil(sustainedWindowMs / 1000) };
+  }
+  return { blocked: false };
+}
+
 async function flagSession(sessionId) {
   await client.sAdd(FLAGGED_KEY, sessionId);
 }
@@ -367,6 +397,7 @@ module.exports = {
   countPaintsInWindow,
   getSessionPaints,
   checkIPRateLimit,
+  checkWriteRateLimitsBatch,
   flagSession,
   isSessionFlagged,
   getFlaggedSessions,

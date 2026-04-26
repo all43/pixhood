@@ -143,19 +143,13 @@ function sendRateLimited(res, retryAfter) {
 }
 
 async function checkWriteRateLimits(ip, sessionId) {
-  const ipLimit = await redis.checkIPRateLimit(ip, 'write', S.RATE_LIMITS.IP_WRITE.max, S.RATE_LIMITS.IP_WRITE.windowMs);
-  if (!ipLimit.allowed) return ipLimit.retryAfter;
-
-  const burst = await redis.countPaintsInWindow(sessionId, S.RATE_LIMITS.SESSION_BURST.windowMs);
-  if (burst > S.RATE_LIMITS.SESSION_BURST.max) {
-    return S.RATE_LIMITS.SESSION_BURST.windowMs / 1000;
-  }
-
-  const sustained = await redis.countPaintsInWindow(sessionId, S.RATE_LIMITS.SESSION_SUSTAINED.windowMs);
-  if (sustained > S.RATE_LIMITS.SESSION_SUSTAINED.max) {
-    return S.RATE_LIMITS.SESSION_SUSTAINED.windowMs / 1000;
-  }
-
+  const result = await redis.checkWriteRateLimitsBatch(
+    ip, sessionId,
+    S.RATE_LIMITS.IP_WRITE.max, S.RATE_LIMITS.IP_WRITE.windowMs,
+    S.RATE_LIMITS.SESSION_BURST.windowMs, S.RATE_LIMITS.SESSION_BURST.max,
+    S.RATE_LIMITS.SESSION_SUSTAINED.windowMs, S.RATE_LIMITS.SESSION_SUSTAINED.max
+  );
+  if (result.blocked) return result.retryAfter;
   return null;
 }
 
