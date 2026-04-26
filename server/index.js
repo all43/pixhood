@@ -11,7 +11,7 @@ const CONSTANTS = {
 };
 
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
-const TILE_KEY_RE = /^-?\d+_-?\d+$/;
+const TILE_KEY_RE = /^-?\d+(_-?\d+)+$/;
 const SESSION_ID_RE = /^sess_[a-z0-9]{2,50}$/;
 
 function validatePaintParent(msg) {
