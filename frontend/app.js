@@ -166,10 +166,12 @@ function hideOverlay() {
   document.getElementById('loading').classList.add('hidden');
 }
 
-async function getGeolocation(timeout) {
+async function getGeolocation(timeout, opts) {
   if (!navigator.geolocation) {
     return { status: 'unavailable' };
   }
+
+  const forceFresh = opts && opts.forceFresh;
 
   const storedGeo = (() => {
     try {
@@ -214,23 +216,21 @@ async function getGeolocation(timeout) {
     });
   };
 
-  // Chrome can intermittently fail immediately after reload.
-  // First, try quickly with normal cache settings.
-  const fastCached = await requestPosition({
-    timeout: CONFIG.GEO_FAST_TIMEOUT,
-    enableHighAccuracy: false,
-    maximumAge: GEO_MAX_AGE_MS
-  });
-  if (fastCached.status === 'granted') {
-    return fastCached;
-  }
+  if (!forceFresh) {
+    const fastCached = await requestPosition({
+      timeout: CONFIG.GEO_FAST_TIMEOUT,
+      enableHighAccuracy: false,
+      maximumAge: GEO_MAX_AGE_MS
+    });
+    if (fastCached.status === 'granted') {
+      return fastCached;
+    }
 
-  // Use stored position before attempting the slow fresh request.
-  // Avoids waiting up to 10s when Chrome's location provider is unresponsive.
-  const storedFreshEnough = storedGeo && (Date.now() - storedGeo.savedAt) < GEO_MAX_AGE_MS;
-  if (storedFreshEnough) {
-    console.info('[geo] using last known stored position (fallback)');
-    return { status: 'granted', lat: storedGeo.lat, lng: storedGeo.lng };
+    const storedFreshEnough = storedGeo && (Date.now() - storedGeo.savedAt) < GEO_MAX_AGE_MS;
+    if (storedFreshEnough) {
+      console.info('[geo] using last known stored position (fallback)');
+      return { status: 'granted', lat: storedGeo.lat, lng: storedGeo.lng };
+    }
   }
 
   const requestedTimeout = timeout ?? CONFIG.GEO_DEFAULT_TIMEOUT;

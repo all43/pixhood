@@ -257,11 +257,18 @@ function createLocateButton() {
   document.getElementById('app').appendChild(btn);
 }
 
+let _lastLocateTap = 0;
+const LOCATE_FORCE_FRESH_MS = 30000;
+
 async function handleLocate() {
   const btn = document.getElementById('locate-btn');
   btn.classList.add('locating');
 
-  const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT);
+  const now = Date.now();
+  const forceFresh = (now - _lastLocateTap) < LOCATE_FORCE_FRESH_MS;
+  _lastLocateTap = now;
+
+  const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT, { forceFresh });
 
   btn.classList.remove('locating');
 
