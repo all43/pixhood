@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Pixhood</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { height: 100%; }
+    body {
+      min-height: 100%;
+      font-family: 'Courier New', Courier, monospace;
+      background: #1a1a2e;
+      color: rgba(255,255,255,0.8);
+      padding: 2rem 1.5rem;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+    .container { max-width: 40rem; margin: 0 auto; }
+    h1 {
+      font-size: 1.5rem;
+      color: #e94560;
+      letter-spacing: 0.2rem;
+      margin-bottom: 0.25rem;
+    }
+    .subtitle {
+      color: rgba(255,255,255,0.4);
+      font-size: 0.8rem;
+      margin-bottom: 2rem;
+    }
+    h2 {
+      font-size: 1rem;
+      color: rgba(255,255,255,0.95);
+      margin-top: 2rem;
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.5px;
+    }
+    p, ul { margin-bottom: 0.75rem; }
+    ul { padding-left: 1.5rem; }
+    li { margin-bottom: 0.35rem; }
+    a { color: #e94560; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .back {
+      display: inline-block;
+      margin-top: 2.5rem;
+      color: rgba(255,255,255,0.45);
+      font-size: 0.85rem;
+    }
+    .back:hover { color: rgba(255,255,255,0.7); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Privacy Policy</h1>
+    <p class="subtitle">Pixhood — pixhood.art</p>
+
+    <h2>Overview</h2>
+    <p>Pixhood is an ephemeral collaborative pixel art map. We keep data processing to an absolute minimum. We do not collect, store, or sell personal data. There are no user accounts, no cookies, no tracking, and no third-party analytics.</p>
+
+    <h2>Controller</h2>
+    <p>Responsible for this service:</p>
+    <ul>
+      <li>Email: <a href="mailto:mail@malikov.dev">mail@malikov.dev</a></li>
+    </ul>
+
+    <h2>Data We Process</h2>
+
+    <h3>IP Addresses</h3>
+    <p>When you use Pixhood, your IP address is temporarily processed server-side for:</p>
+    <ul>
+      <li>Rate limiting (preventing automated abuse)</li>
+      <li>Connection limits (max 10 concurrent WebSocket connections per IP)</li>
+    </ul>
+    <p>IP addresses are stored only in short-lived counters (1–60 minutes) and are never logged permanently or displayed to anyone. They are not correlated with any other data.</p>
+
+    <h3>Anonymous Sessions</h3>
+    <p>Each browser is assigned a random UUID stored in your browser's localStorage. This identifier is used solely for coordinating your paint actions in real time. It is not personal data and cannot be traced back to you.</p>
+
+    <h3>Geolocation</h3>
+    <p>If you grant permission, your browser's Geolocation API is used to center the map on your position. Your precise location coordinates are processed <strong>entirely in your browser</strong> and are never transmitted to our server. The server only receives map coordinates of pixels you paint — these represent areas on a public map, not your physical location.</p>
+
+    <h3>Painted Pixels</h3>
+    <p>Pixel colors and their map coordinates are stored server-side with a 24-hour expiry. After 24 hours they are automatically deleted. Pixels are public and visible to all users.</p>
+
+    <h2>Data We Do Not Collect</h2>
+    <ul>
+      <li>No user accounts or profiles</li>
+      <li>No email addresses or names</li>
+      <li>No cookies</li>
+      <li>No tracking or analytics (Google Analytics, etc.)</li>
+      <li>No third-party services or advertising networks</li>
+      <li>No device fingerprints</li>
+    </ul>
+
+    <h2>Data Retention</h2>
+    <ul>
+      <li><strong>Painted pixels</strong> — deleted after 24 hours (Redis TTL)</li>
+      <li><strong>Paint logs</strong> (for abuse detection) — deleted after 24 hours</li>
+      <li><strong>Rate limit counters</strong> — expire after 1–60 minutes</li>
+      <li><strong>Session blocks</strong> — expire after 1 hour</li>
+    </ul>
+
+    <h2>Legal Basis (GDPR)</h2>
+    <p>Processing of IP addresses for abuse prevention is based on legitimate interest (Art. 6(1)(f) of the GDPR). Processing of pixel data and anonymous session IDs is based on your explicit interaction with the service.</p>
+
+    <h2>Your Rights</h2>
+    <p>Under the GDPR you have the right to access, rectification, erasure, and objection regarding your personal data. Since we do not store personal data beyond ephemeral server-side counters, there is typically nothing to exercise these rights on. If you have concerns, contact us at the email above.</p>
+
+    <h2>Third-Party Services</h2>
+    <ul>
+      <li><strong>Map tiles</strong> — loaded from CARTO (basemaps.cartocdn.com). Subject to <a href="https://carto.com/privacy/" target="_blank" rel="noopener">CARTO's privacy policy</a>.</li>
+      <li><strong>Hosting</strong> — frontend hosted on Cloudflare Pages, backend on Fly.io. These providers may process IP addresses as part of standard HTTP delivery.</li>
+    </ul>
+
+    <h2>Changes</h2>
+    <p>This policy may be updated. The latest version is always available at <a href="https://pixhood.art/privacy.html">pixhood.art/privacy.html</a>.</p>
+
+    <p>Last updated: April 2026</p>
+
+    <a href="/" class="back">&larr; Back to Pixhood</a>
+  </div>
+</body>
+</html>

@@ -98,6 +98,13 @@ fs.copyFileSync(
 );
 console.log('  logo.svg');
 
+// Copy privacy.html
+fs.copyFileSync(
+  path.join(SRC_DIR, 'privacy.html'),
+  path.join(DIST_DIR, 'privacy.html')
+);
+console.log('  privacy.html');
+
 // Copy public/ contents (icons, manifest, headers)
 if (fs.existsSync(PUBLIC_DIR)) {
   const publicFiles = fs.readdirSync(PUBLIC_DIR);
@@ -117,6 +124,7 @@ const iconHash = hashFile(path.join(PUBLIC_DIR, 'icon-512.png')).slice(0, 6);
 const precacheList = [
   '/',
   '/index.html',
+  '/privacy.html',
   ...Object.values(hashedCssFiles).map(f => `/${f}`),
   ...Object.values(hashedJsFiles).filter(f => !f.startsWith('admin')).map(f => `/${f}`),
   '/favicon.svg',
