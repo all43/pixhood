@@ -114,7 +114,7 @@ Each tile can contain a 16×16 sub-grid of child pixels. Painting a parent erase
 4. Connected clients render the new pixel immediately
 5. Viewport changes → client refetches + resubscribes
 
-Sessions are anonymous — a UUID in `localStorage`. No sign-up, no accounts.
+Sessions are anonymous and server-generated — a `sess_<hex>` ID stored in `localStorage`. No sign-up, no accounts.
 
 ### Redis keys
 
@@ -182,7 +182,6 @@ npm run deploy
 ## Limitations & future work
 
 - **Single machine** — WebSocket state is in-memory; scaling requires Redis pub/sub between machines
-- **No rate limiting** — a single client can spam paints
 - **No accounts** — anonymous sessions only, no pixel ownership
 
 ---
