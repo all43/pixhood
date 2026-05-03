@@ -9,6 +9,7 @@ function makeState(overrides = {}) {
     lastPaintLng: 13.41,
     lastPaintTime: 1000000,
     flags: [],
+    excessiveDistanceFreePassUsedAt: null,
     ...overrides
   };
 }
@@ -44,6 +45,27 @@ describe('isViewportPlausible', () => {
 
   it('returns true for zoom above 22', () => {
     expect(S.isViewportPlausible({ n: 52.53, s: 52.51, e: 13.42, w: 13.40 }, 23)).toBe(true);
+  });
+});
+
+describe('isWithinViewport', () => {
+  it('returns true for point inside viewport', () => {
+    const vp = { n: 52.53, s: 52.51, e: 13.42, w: 13.40 };
+    expect(S.isWithinViewport(52.52, 13.41, vp)).toBe(true);
+  });
+
+  it('returns true for point inside 2x margin', () => {
+    const vp = { n: 52.53, s: 52.51, e: 13.42, w: 13.40 };
+    expect(S.isWithinViewport(52.56, 13.41, vp)).toBe(true);
+  });
+
+  it('returns false for point outside 2x margin', () => {
+    const vp = { n: 52.53, s: 52.51, e: 13.42, w: 13.40 };
+    expect(S.isWithinViewport(48.0, 10.0, vp)).toBe(false);
+  });
+
+  it('returns false for null viewport', () => {
+    expect(S.isWithinViewport(52.52, 13.41, null)).toBe(false);
   });
 });
 
@@ -91,11 +113,17 @@ describe('checkPaintSuspicion', () => {
     expect(result.reasons).toContain('outside_viewport');
   });
 
-  it('flags excessive_distance for >500m/s speed', () => {
+  it('flags excessive_distance for >1500m/s speed', () => {
     const state = makeState({ lastPaintLat: 52.52, lastPaintLng: 13.41, lastPaintTime: 1000000 });
     const result = S.checkPaintSuspicion(state, 52.55, 13.41, 1000001);
     expect(result.suspicious).toBe(true);
     expect(result.reasons).toContain('excessive_distance');
+  });
+
+  it('does not flag excessive_distance for ~1000m/s speed', () => {
+    const state = makeState({ lastPaintLat: 52.52, lastPaintLng: 13.41, lastPaintTime: 1000000 });
+    const result = S.checkPaintSuspicion(state, 52.53, 13.41, 1001000);
+    expect(result.reasons).not.toContain('excessive_distance');
   });
 
   it('does not flag excessive_distance for slow movement', () => {
@@ -139,13 +167,32 @@ describe('checkPaintSuspicion', () => {
   });
 });
 
+describe('free pass', () => {
+  it('hasFreePass returns true when never used', () => {
+    const state = makeState();
+    expect(S.hasFreePass(state, 1000000)).toBe(true);
+  });
+
+  it('hasFreePass returns false within 5 minutes of use', () => {
+    const state = makeState();
+    S.useFreePass(state, 1000000);
+    expect(S.hasFreePass(state, 1000000 + 299999)).toBe(false);
+  });
+
+  it('hasFreePass returns true after 5 minutes', () => {
+    const state = makeState();
+    S.useFreePass(state, 1000000);
+    expect(S.hasFreePass(state, 1000000 + 5 * 60 * 1000)).toBe(true);
+  });
+});
+
 describe('shouldAutoRevert', () => {
-  it('returns true when flags >= FLAG_COUNT within window', () => {
+  it('returns true when outside_viewport flags >= FLAG_COUNT within window', () => {
     const now = 1000000;
     const flags = [
-      { reason: 'test', time: now - 100 },
-      { reason: 'test', time: now - 50 },
-      { reason: 'test', time: now }
+      { reason: 'outside_viewport', time: now - 100 },
+      { reason: 'outside_viewport', time: now - 50 },
+      { reason: 'outside_viewport', time: now }
     ];
     expect(S.shouldAutoRevert(flags, null, now)).toBe(true);
   });
@@ -153,8 +200,8 @@ describe('shouldAutoRevert', () => {
   it('returns false when flags < FLAG_COUNT', () => {
     const now = 1000000;
     const flags = [
-      { reason: 'test', time: now - 100 },
-      { reason: 'test', time: now }
+      { reason: 'outside_viewport', time: now - 100 },
+      { reason: 'outside_viewport', time: now }
     ];
     expect(S.shouldAutoRevert(flags, null, now)).toBe(false);
   });
@@ -162,11 +209,42 @@ describe('shouldAutoRevert', () => {
   it('returns false when flags are outside window', () => {
     const now = 1000000;
     const flags = [
-      { reason: 'test', time: now - 700000 },
-      { reason: 'test', time: now - 600001 },
-      { reason: 'test', time: now }
+      { reason: 'outside_viewport', time: now - 700000 },
+      { reason: 'outside_viewport', time: now - 600001 },
+      { reason: 'outside_viewport', time: now }
     ];
     expect(S.shouldAutoRevert(flags, null, now)).toBe(false);
+  });
+
+  it('returns false when only excessive_distance flags are present', () => {
+    const now = 1000000;
+    const flags = [
+      { reason: 'excessive_distance', time: now - 100 },
+      { reason: 'excessive_distance', time: now - 50 },
+      { reason: 'excessive_distance', time: now }
+    ];
+    expect(S.shouldAutoRevert(flags, null, now)).toBe(false);
+  });
+
+  it('returns false when excessive_distance flags dilute viewport flags below threshold', () => {
+    const now = 1000000;
+    const flags = [
+      { reason: 'outside_viewport', time: now - 100 },
+      { reason: 'excessive_distance', time: now - 50 },
+      { reason: 'outside_viewport', time: now }
+    ];
+    expect(S.shouldAutoRevert(flags, null, now)).toBe(false);
+  });
+
+  it('returns true with mixed flag types when enough non-excessive_distance flags', () => {
+    const now = 1000000;
+    const flags = [
+      { reason: 'outside_viewport', time: now - 100 },
+      { reason: 'excessive_distance', time: now - 50 },
+      { reason: 'implausible_viewport', time: now - 25 },
+      { reason: 'outside_viewport', time: now }
+    ];
+    expect(S.shouldAutoRevert(flags, null, now)).toBe(true);
   });
 });
 
@@ -179,6 +257,7 @@ describe('session state management', () => {
     expect(state.lastPaintLng).toBeNull();
     expect(state.lastPaintTime).toBeNull();
     expect(state.flags).toEqual([]);
+    expect(state.excessiveDistanceFreePassUsedAt).toBeNull();
   });
 
   it('updateSessionPaint sets coordinates and time', () => {
@@ -219,13 +298,13 @@ describe('countRecentFlags', () => {
     expect(S.countRecentFlags(null, 60000, 1000000)).toBe(0);
   });
 
-  it('counts only flags within window', () => {
+  it('counts only flags within window excluding excessive_distance', () => {
     const state = S.createSessionState();
-    S.addSessionFlag(state, 'a', 800000);
-    S.addSessionFlag(state, 'b', 950000);
-    S.addSessionFlag(state, 'c', 1000000);
+    S.addSessionFlag(state, 'outside_viewport', 800000);
+    S.addSessionFlag(state, 'excessive_distance', 950000);
+    S.addSessionFlag(state, 'outside_viewport', 1000000);
     const count = S.countRecentFlags(state, 100000, 1000000);
-    expect(count).toBe(2);
+    expect(count).toBe(1);
   });
 
   it('prunes old flags in place', () => {
@@ -238,8 +317,8 @@ describe('countRecentFlags', () => {
 
   it('returns all flags if all are within window', () => {
     const state = S.createSessionState();
-    S.addSessionFlag(state, 'a', 990000);
-    S.addSessionFlag(state, 'b', 1000000);
+    S.addSessionFlag(state, 'outside_viewport', 990000);
+    S.addSessionFlag(state, 'outside_viewport', 1000000);
     const count = S.countRecentFlags(state, 60000, 1000000);
     expect(count).toBe(2);
   });

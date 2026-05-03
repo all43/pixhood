@@ -183,7 +183,7 @@ Connection: `wss://api.pixhood.art` (max 10 concurrent connections per IP). Orig
 - `{ type: "pong" }` — heartbeat response
 - `{ type: "session", sessionId }` — server-assigned session ID, sent when client has no valid session
 - `{ type: "paintAck", id }` — paint acknowledged (sent to painting client only)
-- `{ type: "paintError", id, reason, retryAfter? }` — paint rejected (`rate_limited`, `blocked`, `invalid_input`, `no_session`, `server_error`)
+- `{ type: "paintError", id, reason, retryAfter? }` — paint rejected (`rate_limited`, `blocked`, `invalid_input`, `no_session`, `no_viewport`, `server_error`)
 - `{ type: "blocked" }` — session auto-reverted (sent to painting client only)
 
 **Client → Server:**
@@ -248,11 +248,18 @@ Rate-limited paints get a `paintError` WS message with `reason: "rate_limited"` 
 
 Three heuristic checks run on every paint (non-blocking — flags but doesn't reject):
 
-1. **Viewport check**: paint coordinates must fall within the session's last reported WS viewport ± 2× viewport span margin
-2. **Distance check**: consecutive paints from the same session must not exceed 500m/s speed (Haversine distance / time between paints)
-3. **Viewport plausibility**: viewport span must be consistent with the reported zoom level (max span = `360 / 2^(zoom-6)`). An implausibly large viewport suggests spoofed bounds.
+1. **Viewport check** (`outside_viewport`): paint coordinates must fall within the session's last reported WS viewport ± 2× viewport span margin
+2. **Distance check** (`excessive_distance`): consecutive paints from the same session must not exceed 1500 m/s speed (Haversine distance / time between paints). The first `excessive_distance` per session is forgiven via a free pass (resets after 5 minutes — matching the GPS cache duration). `excessive_distance` flags do not count toward the accumulated-flags auto-revert.
+3. **Viewport plausibility** (`implausible_viewport`): viewport span must be consistent with the reported zoom level (max span = `360 / 2^(zoom-6)`). An implausibly large viewport suggests spoofed bounds.
 
 Flagged sessions are stored in `flagged_sessions` Redis set and logged server-side with `[suspicion]` prefix.
+
+### Paint rejection
+
+Before any rate limit or suspicion check, paints are rejected early if:
+- No session ID (`reason: "no_session"`)
+- No viewport subscribed yet (`reason: "no_viewport"`) — forces bots to send viewport, making `outside_viewport` and `implausible_viewport` checks meaningful
+- Session is blocked (`reason: "blocked"`)
 
 ### Auto-revert
 
@@ -261,10 +268,12 @@ Triggered after logging a paint but before saving it. Three conditions, any one 
 | Trigger | Threshold | Window |
 |---------|-----------|--------|
 | Extreme burst | >30 paints | 5 seconds |
-| Impossible distance | >2km between consecutive paints | 5 seconds |
-| Accumulated flags | ≥3 suspicion flags | 10 minutes |
+| Impossible distance | >2km between consecutive paints outside viewport | 5 seconds |
+| Accumulated flags | ≥3 non-excessive_distance suspicion flags | 10 minutes |
 
-Blocked sessions have their paints reverted and receive `{ type: "blocked" }` WS message. Subsequent paints are silently rejected. Block expires after 1 hour (`blocked:<sessionId>` key with TTL).
+`excessive_distance` flags are excluded from the accumulated-flags count — only `outside_viewport` and `implausible_viewport` count toward the ≥3 threshold. The first `excessive_distance` per 5-minute window is forgiven entirely (free pass).
+
+Blocked sessions have their paints reverted and receive `{ type: "blocked" }` WS message. Subsequent paints are silently rejected. Block expires after 1 hour (`blocked:<sessionId>` key with TTL). Double auto-reverts from concurrent paint handlers are prevented by an in-memory `revertingSessions` guard.
 
 ### Revert
 

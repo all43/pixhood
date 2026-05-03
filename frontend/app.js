@@ -320,6 +320,9 @@ function onPaintError(reason, count, retryAfter) {
     showToast(`Slow down! Try again in ${retryAfter || 30}s`);
   } else if (reason === 'blocked') {
     showToast('Painting suspended — your session was flagged');
+  } else if (reason === 'no_viewport') {
+    showToast('Connecting \u2014 try again in a moment');
+    scheduleViewportRefresh();
   } else if (reason === 'timeout') {
     showToast('Paint may not have saved — server slow to respond');
     scheduleViewportRefresh();

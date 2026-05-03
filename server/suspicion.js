@@ -16,6 +16,10 @@ const RATE_LIMITS = {
 
 const MAX_WS_PER_IP = 10;
 
+const EXCESSIVE_DISTANCE_THRESHOLD_MS = 1500;
+
+const FREE_PASS_RESET_MS = 5 * 60 * 1000;
+
 function haversineDistance(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -33,6 +37,16 @@ function isViewportPlausible(bounds, zoom) {
   const maxSpan = 360 / Math.pow(2, zoom - 6);
   if (latSpan > maxSpan || lngSpan > maxSpan) return false;
   return true;
+}
+
+function isWithinViewport(lat, lng, viewport) {
+  if (!viewport) return false;
+  const vp = viewport;
+  const latSpan = vp.n - vp.s;
+  const lngSpan = vp.e - vp.w;
+  const m = 2.0;
+  return lat >= vp.s - latSpan * m && lat <= vp.n + latSpan * m &&
+         lng >= vp.w - lngSpan * m && lng <= vp.e + lngSpan * m;
 }
 
 function checkPaintSuspicion(state, lat, lng, now) {
@@ -61,7 +75,7 @@ function checkPaintSuspicion(state, lat, lng, now) {
   if (state.lastPaintLat != null && state.lastPaintTime != null) {
     const distance = haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
     const elapsed = (now - state.lastPaintTime) / 1000;
-    if (elapsed > 0 && elapsed < 60 && distance / elapsed > 500) {
+    if (elapsed > 0 && elapsed < 60 && distance / elapsed > EXCESSIVE_DISTANCE_THRESHOLD_MS) {
       suspicious = true;
       reasons.push('excessive_distance');
     }
@@ -70,16 +84,28 @@ function checkPaintSuspicion(state, lat, lng, now) {
   return { suspicious, reasons };
 }
 
+function hasFreePass(state, now) {
+  if (!state.excessiveDistanceFreePassUsedAt) return true;
+  return (now - state.excessiveDistanceFreePassUsedAt) >= FREE_PASS_RESET_MS;
+}
+
+function useFreePass(state, now) {
+  state.excessiveDistanceFreePassUsedAt = now;
+}
+
 function shouldAutoRevert(flags, sessionState, now) {
   if (flags.length >= AUTO_REVERT.FLAG_COUNT) {
-    const recent = flags.filter(f => f.time >= now - AUTO_REVERT.FLAG_WINDOW_MS);
+    const recent = flags.filter(f =>
+      f.time >= now - AUTO_REVERT.FLAG_WINDOW_MS &&
+      f.reason !== 'excessive_distance'
+    );
     if (recent.length >= AUTO_REVERT.FLAG_COUNT) return true;
   }
   return false;
 }
 
 function createSessionState() {
-  return { viewport: null, zoom: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [] };
+  return { viewport: null, zoom: null, lastPaintLat: null, lastPaintLng: null, lastPaintTime: null, flags: [], excessiveDistanceFreePassUsedAt: null };
 }
 
 function updateSessionPaint(state, lat, lng, now) {
@@ -100,16 +126,22 @@ function addSessionFlag(state, reason, now) {
 function countRecentFlags(state, windowMs, now) {
   if (!state) return 0;
   const cutoff = now - windowMs;
-  return state.flags.filter(f => f.time >= cutoff).length;
+  state.flags = state.flags.filter(f => f.time >= cutoff);
+  return state.flags.filter(f => f.reason !== 'excessive_distance').length;
 }
 
 module.exports = {
   AUTO_REVERT,
   RATE_LIMITS,
   MAX_WS_PER_IP,
+  EXCESSIVE_DISTANCE_THRESHOLD_MS,
+  FREE_PASS_RESET_MS,
   haversineDistance,
   isViewportPlausible,
+  isWithinViewport,
   checkPaintSuspicion,
+  hasFreePass,
+  useFreePass,
   shouldAutoRevert,
   createSessionState,
   updateSessionPaint,

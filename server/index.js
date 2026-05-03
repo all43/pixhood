@@ -42,6 +42,7 @@ const ADMIN_API_KEY = process.env.ADMIN_API_KEY || null;
 
 const sessionStates = new Map();
 const sessionRefCounts = new Map();
+const revertingSessions = new Set();
 
 function setCORS(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
@@ -161,7 +162,8 @@ async function shouldAutoRevert(sessionId, lat, lng) {
   if (state && state.lastPaintLat != null && state.lastPaintTime != null) {
     const distance = S.haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng);
     const elapsed = (Date.now() - state.lastPaintTime) / 1000;
-    if (elapsed > 0 && elapsed < S.AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
+    const withinVp = S.isWithinViewport(lat, lng, state.viewport);
+    if (!withinVp && elapsed > 0 && elapsed < S.AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
         distance > S.AUTO_REVERT.DISTANCE_MAX_M) {
       return 'distance';
     }
@@ -177,6 +179,12 @@ async function handlePaintParent(ws, msg) {
   const sessionId = ws.sessionId;
   if (!sessionId) {
     ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_session' }));
+    return;
+  }
+
+  const sessionState = sessionStates.get(sessionId);
+  if (!sessionState || !sessionState.viewport) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_viewport' }));
     return;
   }
 
@@ -229,20 +237,26 @@ async function handlePaintParent(ws, msg) {
 
   const autoRevertReason = await shouldAutoRevert(sessionId, pixel.lat, pixel.lng);
   if (autoRevertReason) {
-    console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
-    const result = await redis.revertSession(sessionId);
-    await redis.blockSession(sessionId);
-    for (const tile of result.tiles) {
-      if (tile.action === 'restored' && tile.pixel) {
-        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
-      } else if (tile.action === 'deleted') {
-        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
-      } else if (tile.action === 'child_reverted' && tile.parentData) {
-        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+    if (revertingSessions.has(sessionId)) return;
+    revertingSessions.add(sessionId);
+    try {
+      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
+      const result = await redis.revertSession(sessionId);
+      await redis.blockSession(sessionId);
+      for (const tile of result.tiles) {
+        if (tile.action === 'restored' && tile.pixel) {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
+        } else if (tile.action === 'deleted') {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
+        } else if (tile.action === 'child_reverted' && tile.parentData) {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+        }
       }
+      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
+    } finally {
+      revertingSessions.delete(sessionId);
     }
-    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
-    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
     return;
   }
 
@@ -250,7 +264,15 @@ async function handlePaintParent(ws, msg) {
   if (suspicion.suspicious) {
     console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${pixel.lat} lng=${pixel.lng}`);
     redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
+    const now = Date.now();
+    const state = sessionStates.get(sessionId);
     for (const reason of suspicion.reasons) {
+      if (reason === 'excessive_distance') {
+        if (S.hasFreePass(state, now)) {
+          S.useFreePass(state, now);
+          continue;
+        }
+      }
       addSessionFlag(sessionId, reason);
     }
   }
@@ -268,6 +290,12 @@ async function handlePaintChild(ws, msg) {
   const sessionId = ws.sessionId;
   if (!sessionId) {
     ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_session' }));
+    return;
+  }
+
+  const sessionState = sessionStates.get(sessionId);
+  if (!sessionState || !sessionState.viewport) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_viewport' }));
     return;
   }
 
@@ -319,20 +347,26 @@ async function handlePaintChild(ws, msg) {
 
   const autoRevertReason = await shouldAutoRevert(sessionId, childPixel.lat, childPixel.lng);
   if (autoRevertReason) {
-    console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
-    const result = await redis.revertSession(sessionId);
-    await redis.blockSession(sessionId);
-    for (const tile of result.tiles) {
-      if (tile.action === 'restored' && tile.pixel) {
-        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
-      } else if (tile.action === 'deleted') {
-        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
-      } else if (tile.action === 'child_reverted' && tile.parentData) {
-        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+    if (revertingSessions.has(sessionId)) return;
+    revertingSessions.add(sessionId);
+    try {
+      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
+      const result = await redis.revertSession(sessionId);
+      await redis.blockSession(sessionId);
+      for (const tile of result.tiles) {
+        if (tile.action === 'restored' && tile.pixel) {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
+        } else if (tile.action === 'deleted') {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
+        } else if (tile.action === 'child_reverted' && tile.parentData) {
+          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
+        }
       }
+      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
+    } finally {
+      revertingSessions.delete(sessionId);
     }
-    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
-    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
     return;
   }
 
@@ -340,7 +374,15 @@ async function handlePaintChild(ws, msg) {
   if (suspicion.suspicious) {
     console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${childPixel.lat} lng=${childPixel.lng}`);
     redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
+    const now = Date.now();
+    const state = sessionStates.get(sessionId);
     for (const reason of suspicion.reasons) {
+      if (reason === 'excessive_distance') {
+        if (S.hasFreePass(state, now)) {
+          S.useFreePass(state, now);
+          continue;
+        }
+      }
       addSessionFlag(sessionId, reason);
     }
   }
