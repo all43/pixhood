@@ -41,6 +41,7 @@ async function loadViewport(viewportBounds, zoom) {
   const params = new URLSearchParams({
     n: fb.n, s: fb.s, e: fb.e, w: fb.w, zoom: zoom || 0
   });
+  if (CONFIG.SPACE) params.set('space', CONFIG.SPACE);
   const res = await fetch(`${CONFIG.API_URL}/pixels?${params}`);
   if (!res.ok) throw new Error(`Failed to load pixels: ${res.status}`);
   const pixels = await res.json();
@@ -134,7 +135,8 @@ function setViewportReadyCallback(cb) {
 }
 
 function _openWS() {
-  _ws = new WebSocket(CONFIG.WS_URL);
+  const wsUrl = CONFIG.WS_URL + (CONFIG.SPACE ? `?space=${CONFIG.SPACE}` : '');
+  _ws = new WebSocket(wsUrl);
 
   _ws.addEventListener('open', () => {
     console.log('WS connected');

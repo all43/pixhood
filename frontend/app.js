@@ -402,14 +402,93 @@ async function proceedToMap(geoResult, pixelsPromise) {
   hideOverlay();
 }
 
+function initSpaceUI() {
+  document.getElementById('btn-create-space').addEventListener('click', async () => {
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
+      if (!res.ok) throw new Error(res.status);
+      const { slug } = await res.json();
+      location.href = `/s/${slug}`;
+    } catch {
+      showToast('Failed to create space');
+    }
+  });
+
+  document.getElementById('btn-join-space').addEventListener('click', () => {
+    document.getElementById('welcome-space-buttons').classList.add('hidden');
+    document.getElementById('join-space-form').classList.remove('hidden');
+    document.getElementById('join-space-input').focus();
+  });
+
+  document.getElementById('btn-join-go').addEventListener('click', () => {
+    const val = document.getElementById('join-space-input').value.trim();
+    const slug = parseSpaceSlug(val);
+    if (slug) {
+      location.href = `/s/${slug}`;
+    } else {
+      showToast('Invalid space code or link');
+    }
+  });
+
+  document.getElementById('btn-join-back').addEventListener('click', () => {
+    document.getElementById('join-space-form').classList.add('hidden');
+    document.getElementById('welcome-space-buttons').classList.remove('hidden');
+  });
+
+  document.getElementById('join-space-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-join-go').click();
+  });
+}
+
+function parseSpaceSlug(val) {
+  try {
+    const url = new URL(val);
+    const m = url.pathname.match(/^\/s\/([a-zA-Z0-9]{12})$/);
+    return m ? m[1] : null;
+  } catch {}
+  if (/^[a-zA-Z0-9]{12}$/.test(val)) return val;
+  return null;
+}
+
+function initSpaceIndicator() {
+  const indicator = document.getElementById('space-indicator');
+  const label = document.getElementById('space-label');
+  const btn = document.getElementById('btn-copy-space');
+  label.textContent = CONFIG.SPACE;
+  indicator.classList.remove('hidden');
+  btn.addEventListener('click', () => {
+    const url = `${location.origin}/s/${CONFIG.SPACE}`;
+    navigator.clipboard.writeText(url).then(() => showToast('Link copied')).catch(() => {
+      showToast(url);
+    });
+  });
+}
+
 async function init() {
   initColorPicker();
   document.querySelector('.banner-close').addEventListener('click', hideLocationBanner);
+  initSpaceUI();
 
   const geoPromise = (async () => {
     const vb = { n: CONFIG.DEFAULT_LAT + CONFIG.INIT_VIEWPORT_SPAN, s: CONFIG.DEFAULT_LAT - CONFIG.INIT_VIEWPORT_SPAN, e: CONFIG.DEFAULT_LNG + CONFIG.INIT_VIEWPORT_SPAN, w: CONFIG.DEFAULT_LNG - CONFIG.INIT_VIEWPORT_SPAN };
     return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
   })();
+
+  if (CONFIG.SPACE) {
+    initSpaceIndicator();
+    const pref = localStorage.getItem('geo_pref');
+    if (pref === 'denied') {
+      await proceedToMap({ status: 'denied' }, geoPromise);
+    } else if (pref === 'granted' || pref === 'skipped') {
+      await proceedToMap({ status: pref }, geoPromise);
+    } else {
+      showSpinnerScreen('Waiting for location\u2026');
+      const result = await getGeolocation(CONFIG.GEO_GRANTED_TIMEOUT);
+      handleLocationResult(result);
+      await proceedToMap(result, geoPromise);
+    }
+    return;
+  }
 
   const pref = localStorage.getItem('geo_pref');
 

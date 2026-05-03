@@ -187,7 +187,7 @@ self.addEventListener('fetch', event => {
   }
   
   // Network-first for API calls
-  if (url.pathname.startsWith('/pixels') || url.pathname.startsWith('/ws')) {
+  if (url.pathname.startsWith('/pixels') || url.pathname.startsWith('/spaces') || url.pathname.startsWith('/ws')) {
     event.respondWith(
       fetch(event.request)
         .catch(() => new Response(JSON.stringify({ error: 'offline' }), {

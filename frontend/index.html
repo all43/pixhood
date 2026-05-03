@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <base href="/" />
   <meta name="description" content="Paint pixels on a map — ephemeral collaborative art" />
   <meta name="theme-color" content="#16213e" />
   <link rel="manifest" href="/manifest.json?v=2" />
@@ -16,6 +17,10 @@
   <div id="app">
     <div id="topbar">
       <div id="logo"><img src="logo.svg" alt="" class="logo-icon" />PIXHOOD</div>
+      <div id="space-indicator" class="hidden">
+        <span id="space-label"></span>
+        <button id="btn-copy-space" type="button" title="Copy link">&#x2398;</button>
+      </div>
       <div id="palette"></div>
     </div>
     <div id="map"></div>
@@ -31,6 +36,18 @@
       <div id="welcome-buttons">
         <button id="btn-enable-geo">Enable location</button>
         <button id="btn-skip-geo">Continue without</button>
+      </div>
+      <div id="welcome-divider">
+        <span>or paint with friends</span>
+      </div>
+      <div id="welcome-space-buttons">
+        <button id="btn-create-space">Create Space</button>
+        <button id="btn-join-space">Join Space</button>
+      </div>
+      <div id="join-space-form" class="hidden">
+        <input id="join-space-input" type="text" placeholder="Paste space link or code" autocomplete="off" spellcheck="false" />
+        <button id="btn-join-go">Go</button>
+        <button id="btn-join-back" type="button">Back</button>
       </div>
       <a id="privacy-link" href="privacy.html">Privacy Policy</a>
     </div>

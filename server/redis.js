@@ -9,13 +9,19 @@ async function connect() {
   console.log('Redis connected');
 }
 
-const TTL = 86400; // 24 hours
-const GEO_KEY = 'pixels:geo';
+const TTL = 86400;
+const GEO_KEY_GLOBAL = 'pixels:geo';
 const PAINT_LOG_TTL = 86400;
 const FLAGGED_KEY = 'flagged_sessions';
+const SPACE_SLUG_RE = /^[a-zA-Z0-9]{12}$/;
 
 function paintLogKey(sessionId) { return `paintlog:${sessionId}`; }
+
 function rateLimitKey(prefix, id) { return `ratelimit:${prefix}:${id}`; }
+
+function rateLimitSpaceKey(prefix, id, space) {
+  return space ? `space:ratelimit:${prefix}:${id}:${space}` : `ratelimit:${prefix}:${id}`;
+}
 
 const LAT_METERS_PER_DEG = 111320;
 
@@ -23,29 +29,34 @@ function lngMetersPerDeg(lat) {
   return 111320 * Math.cos(lat * Math.PI / 180);
 }
 
-function pixelKey(id) {
-  return `pixel:${id}`;
+function pixelKey(id, space) {
+  return space ? `space:${space}:pixel:${id}` : `pixel:${id}`;
 }
 
-function subpixelsKey(id) {
-  return `subpixels:${id}`;
+function subpixelsKey(id, space) {
+  return space ? `space:${space}:subpixels:${id}` : `subpixels:${id}`;
 }
 
-async function savePixel(pixel) {
-  const key = pixelKey(pixel.id);
+function geoKey(space) {
+  return space ? `space:${space}:pixels:geo` : GEO_KEY_GLOBAL;
+}
+
+async function savePixel(pixel, space) {
+  const key = pixelKey(pixel.id, space);
+  const gKey = geoKey(space);
   const multi = client.multi();
   multi.set(key, JSON.stringify(pixel), { EX: TTL });
-  multi.geoAdd(GEO_KEY, { longitude: pixel.lng, latitude: pixel.lat, member: pixel.id });
+  multi.geoAdd(gKey, { longitude: pixel.lng, latitude: pixel.lat, member: pixel.id });
   await multi.exec();
 }
 
-async function deleteSubpixels(parentId) {
-  await client.del(subpixelsKey(parentId));
+async function deleteSubpixels(parentId, space) {
+  await client.del(subpixelsKey(parentId, space));
 }
 
-async function saveChildPixel(parentId, childKey, childPixel) {
-  const subKey = subpixelsKey(parentId);
-  const pKey = pixelKey(parentId);
+async function saveChildPixel(parentId, childKey, childPixel, space) {
+  const subKey = subpixelsKey(parentId, space);
+  const pKey = pixelKey(parentId, space);
 
   const multi = client.multi();
   multi.hSet(subKey, childKey, JSON.stringify(childPixel));
@@ -62,21 +73,22 @@ async function saveChildPixel(parentId, childKey, childPixel) {
   return { parent, children };
 }
 
-async function getPixelsInViewport(n, s, e, w) {
+async function getPixelsInViewport(n, s, e, w, space) {
+  const gKey = geoKey(space);
   const centerLng = (w + e) / 2;
   const centerLat = (n + s) / 2;
   const widthM = (e - w) * lngMetersPerDeg(centerLat);
   const heightM = (n - s) * LAT_METERS_PER_DEG;
 
   const members = await client.geoSearch(
-    GEO_KEY,
+    gKey,
     { longitude: centerLng, latitude: centerLat },
     { width: widthM, height: heightM, unit: 'm' }
   );
 
   if (members.length === 0) return { pixels: [], staleKeys: [] };
 
-  const keys = members.map(m => pixelKey(m));
+  const keys = members.map(m => pixelKey(m, space));
   const values = await client.mGet(keys);
 
   const pixels = [];
@@ -93,20 +105,21 @@ async function getPixelsInViewport(n, s, e, w) {
   return { pixels, staleKeys };
 }
 
-async function getSubpixels(parentId) {
-  const exists = await client.exists(subpixelsKey(parentId));
+async function getSubpixels(parentId, space) {
+  const key = subpixelsKey(parentId, space);
+  const exists = await client.exists(key);
   if (!exists) return [];
-  const raw = await client.hGetAll(subpixelsKey(parentId));
-  await client.expire(subpixelsKey(parentId), TTL);
+  const raw = await client.hGetAll(key);
+  await client.expire(key, TTL);
   return Object.values(raw).map(v => JSON.parse(v));
 }
 
-async function getSubpixelsMulti(parentIds) {
+async function getSubpixelsMulti(parentIds, space) {
   if (parentIds.length === 0) return [];
   const pipeline = client.multi();
   for (const id of parentIds) {
-    pipeline.hGetAll(subpixelsKey(id));
-    pipeline.expire(subpixelsKey(id), TTL);
+    pipeline.hGetAll(subpixelsKey(id, space));
+    pipeline.expire(subpixelsKey(id, space), TTL);
   }
   const results = await pipeline.exec();
   const childrenArrays = [];
@@ -119,23 +132,24 @@ async function getSubpixelsMulti(parentIds) {
   return childrenArrays;
 }
 
-async function cleanupGeoIndex(staleKeys) {
+async function cleanupGeoIndex(staleKeys, space) {
   if (staleKeys.length === 0) return;
-  await client.zRem(GEO_KEY, staleKeys);
+  await client.zRem(geoKey(space), staleKeys);
 }
 
-async function getPixelRaw(id) {
-  return client.get(pixelKey(id));
+async function getPixelRaw(id, space) {
+  return client.get(pixelKey(id, space));
 }
 
-async function getSubpixelsAll(id) {
-  const exists = await client.exists(subpixelsKey(id));
+async function getSubpixelsAll(id, space) {
+  const key = subpixelsKey(id, space);
+  const exists = await client.exists(key);
   if (!exists) return {};
-  return client.hGetAll(subpixelsKey(id));
+  return client.hGetAll(key);
 }
 
-async function getChildRaw(parentId, childKey) {
-  return client.hGet(subpixelsKey(parentId), childKey);
+async function getChildRaw(parentId, childKey, space) {
+  return client.hGet(subpixelsKey(parentId, space), childKey);
 }
 
 async function logPaint(sessionId, entry) {
@@ -174,8 +188,8 @@ async function checkIPRateLimit(ip, prefix, limit, windowMs) {
   return { allowed: true };
 }
 
-async function checkWriteRateLimitsBatch(ip, sessionId, ipWriteMax, ipWriteWindowMs, burstWindowMs, burstMax, sustainedWindowMs, sustainedMax) {
-  const ipKey = rateLimitKey('write', ip);
+async function checkWriteRateLimitsBatch(ip, sessionId, space, ipWriteMax, ipWriteWindowMs, burstWindowMs, burstMax, sustainedWindowMs, sustainedMax) {
+  const ipKey = rateLimitSpaceKey('write', ip, space);
   const paintKey = paintLogKey(sessionId);
   const now = Date.now();
 
@@ -236,6 +250,7 @@ async function revertSession(sessionId) {
 
   for (const [tileKey, entries] of tilesTouched) {
     entries.sort((a, b) => a.timestamp - b.timestamp);
+    const space = entries[0].space || null;
     const hasParentPaint = entries.some(e => e.type === 'parent');
 
     if (hasParentPaint) {
@@ -250,12 +265,12 @@ async function revertSession(sessionId) {
           sessionId: firstParent.previousSessionId || 'revert'
         };
         const multi = client.multi();
-        multi.set(pixelKey(tileKey), JSON.stringify(pixelData), { EX: TTL });
-        multi.geoAdd(GEO_KEY, { longitude: pixelData.lng, latitude: pixelData.lat, member: tileKey });
+        multi.set(pixelKey(tileKey, space), JSON.stringify(pixelData), { EX: TTL });
+        multi.geoAdd(geoKey(space), { longitude: pixelData.lng, latitude: pixelData.lat, member: tileKey });
         await multi.exec();
 
         if (firstParent.previousChildren && firstParent.previousChildren.length > 0) {
-          const subKey = subpixelsKey(tileKey);
+          const subKey = subpixelsKey(tileKey, space);
           const subMulti = client.multi();
           for (const child of firstParent.previousChildren) {
             subMulti.hSet(subKey, `${child.subX}_${child.subY}`, JSON.stringify(child));
@@ -263,21 +278,21 @@ async function revertSession(sessionId) {
           subMulti.expire(subKey, TTL);
           await subMulti.exec();
         } else {
-          await client.del(subpixelsKey(tileKey));
+          await client.del(subpixelsKey(tileKey, space));
         }
-        tileResults.push({ tileKey, lat: pixelData.lat, lng: pixelData.lng, action: 'restored', pixel: pixelData });
+        tileResults.push({ tileKey, space, lat: pixelData.lat, lng: pixelData.lng, action: 'restored', pixel: pixelData });
       } else {
         const lat = firstParent.lat;
         const lng = firstParent.lng;
-        await client.del(pixelKey(tileKey));
-        await client.del(subpixelsKey(tileKey));
-        await client.zRem(GEO_KEY, tileKey);
-        tileResults.push({ tileKey, lat, lng, action: 'deleted' });
+        await client.del(pixelKey(tileKey, space));
+        await client.del(subpixelsKey(tileKey, space));
+        await client.zRem(geoKey(space), tileKey);
+        tileResults.push({ tileKey, space, lat, lng, action: 'deleted' });
       }
     } else {
       for (const entry of entries) {
         if (entry.previousChildColor != null) {
-          await client.hSet(subpixelsKey(tileKey), entry.childKey, JSON.stringify({
+          await client.hSet(subpixelsKey(tileKey, space), entry.childKey, JSON.stringify({
             id: `${tileKey}_${entry.childKey}`,
             parentId: tileKey,
             subX: entry.previousSubX,
@@ -287,13 +302,13 @@ async function revertSession(sessionId) {
             sessionId: 'revert'
           }));
         } else {
-          await client.hDel(subpixelsKey(tileKey), entry.childKey);
+          await client.hDel(subpixelsKey(tileKey, space), entry.childKey);
         }
       }
-      await client.expire(subpixelsKey(tileKey), TTL);
-      const rawParent = await client.get(pixelKey(tileKey));
+      await client.expire(subpixelsKey(tileKey, space), TTL);
+      const rawParent = await client.get(pixelKey(tileKey, space));
       const parentData = rawParent ? JSON.parse(rawParent) : null;
-      tileResults.push({ tileKey, lat: entries[0].lat, lng: entries[0].lng, action: 'child_reverted', parentData });
+      tileResults.push({ tileKey, space, lat: entries[0].lat, lng: entries[0].lng, action: 'child_reverted', parentData });
     }
 
     revertedCount++;
@@ -366,15 +381,15 @@ async function getActiveSessions() {
   return sessions;
 }
 
-async function deletePixelsInRegion(n, s, e, w) {
-  const { pixels, staleKeys } = await getPixelsInViewport(n, s, e, w);
-  if (staleKeys.length > 0) await cleanupGeoIndex(staleKeys);
+async function deletePixelsInRegion(n, s, e, w, space) {
+  const { pixels, staleKeys } = await getPixelsInViewport(n, s, e, w, space);
+  if (staleKeys.length > 0) await cleanupGeoIndex(staleKeys, space);
 
   const deleted = [];
   for (const pixel of pixels) {
-    await client.del(pixelKey(pixel.id));
-    await client.del(subpixelsKey(pixel.id));
-    await client.zRem(GEO_KEY, pixel.id);
+    await client.del(pixelKey(pixel.id, space));
+    await client.del(subpixelsKey(pixel.id, space));
+    await client.zRem(geoKey(space), pixel.id);
     deleted.push(pixel);
   }
 
@@ -410,5 +425,6 @@ module.exports = {
   incrementAdminFailure,
   resetAdminFailure,
   deletePixelsInRegion,
-  getActiveSessions
+  getActiveSessions,
+  SPACE_SLUG_RE
 };

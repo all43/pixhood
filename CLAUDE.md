@@ -61,7 +61,8 @@ pixhood/
 │   │   ├── manifest.json    # PWA manifest
 │   │   ├── icon-192.png   # PWA icon
 │   │   ├── icon-512.png  # PWA icon
-│   │   └── _headers     # Cache headers
+│   │   ├── _headers     # Cache headers
+│   │   └── _redirects   # SPA routing: /s/* → index.html
 │   ├── scripts/       # Build utilities
 │   │   └── generate-icons.js
 │   └── dist/          # Build output (gitignored)
@@ -138,15 +139,46 @@ Each tile can contain a 16×16 sub-grid of child pixels. Sub-tile keys: `${paren
 
 No user accounts — sessions are server-generated (`sess_<32hex>` via `crypto.randomBytes`) and stored in `localStorage`. Session state is reference-counted across WS connections; survives reconnects, deleted only when ref count reaches 0.
 
+## Spaces
+
+Isolated painting environments with separate pixel data. Used for kids' safety, friend groups, school classes — anyone with the link can paint, no one else can see or affect the pixels.
+
+- **URL**: `pixhood.art/s/<slug>` (path-based, Cloudflare Pages `_redirects` routes to SPA)
+- **Slug**: 12-char base62 string (`crypto.randomBytes(9).toString('base64url').slice(0, 12)`), ~3.2 × 10²¹ combinations
+- **Creation**: `POST /spaces` → `{ slug }`. Rate-limited: 10/min per IP. No Redis state until first paint (lazy).
+- **Privacy**: Invalid/unknown slug returns `[]` (identical to empty space). No enumeration endpoints. Global read rate limit (300/min per IP) makes brute-force impractical.
+- **Isolation**: Redis keys prefixed with `space:<slug>:`. Each space has its own geo index, pixel keys, and subpixel hashes. Broadcasts are scoped to connections in the same space.
+
+### Space-aware architecture
+
+**Redis keys**: All pixel/subpixel/geo functions in `redis.js` accept an optional `space` parameter. When provided, keys are prefixed (`space:<slug>:pixel:<id>`). When null, global keys are used (no migration needed).
+
+**WebSocket**: Client connects with `?space=<slug>` query param. Server stores `ws.space` on the connection (immutable). All broadcasts check `client.space === space`. Client never sends space in per-message payloads.
+
+**Paint log**: `paintlog:<sessionId>` stays global (cross-space abuse detection). Each log entry includes a `space` field so `revertSession` can restore pixels in the correct space and broadcast correctly.
+
+**Rate limits**: IP write rate limits are per-space (`space:ratelimit:write:<ip>:<space>`). Session burst/sustained checks stay global via paint log. Read rate limits stay global.
+
+**Admin**: Admin endpoints operate on a single space (passed via `space` query param or from paint log entries during revert). `DELETE /admin/region` accepts optional `space` param.
+
+**Frontend**: `CONFIG.SPACE` parsed from URL path in `config.js`. Passed as query param to HTTP API calls and as WS connection param. Welcome screen shows "Create Space" / "Join Space" buttons. Topbar shows space slug with copy-link button when inside a space.
+
+**Service worker**: Navigation to `/s/<slug>` handled by existing network-first strategy. Cloudflare Pages `_redirects` serves `index.html` for all `/s/*` paths.
+
 ## Redis keys
 
 | Key pattern | Type | TTL | Purpose |
 |-------------|------|-----|---------|
-| `pixel:<tileKey>` | String | 24h | Parent pixel JSON |
-| `subpixels:<tileKey>` | Hash | 24h | Child pixels: field=`subX_subY`, value=JSON |
-| `pixels:geo` | Sorted Set | — | GEOADD/GEOSEARCH for viewport bounding-box queries |
-| `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with previous state for revert |
-| `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (INCR + EXPIRE) |
+| `pixel:<tileKey>` | String | 24h | Parent pixel JSON (global) |
+| `subpixels:<tileKey>` | Hash | 24h | Child pixels: field=`subX_subY`, value=JSON (global) |
+| `pixels:geo` | Sorted Set | — | GEOADD/GEOSEARCH for viewport queries (global) |
+| `space:<slug>:pixel:<tileKey>` | String | 24h | Parent pixel JSON (space-scoped) |
+| `space:<slug>:subpixels:<tileKey>` | Hash | 24h | Child pixels (space-scoped) |
+| `space:<slug>:pixels:geo` | Sorted Set | — | Viewport geo index (space-scoped) |
+| `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with `space` field + previous state for revert |
+| `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (global reads) |
+| `space:ratelimit:write:<ip>:<space>` | String | 1 min | Per-space IP write rate limit |
+| `ratelimit:space_create:<ip>` | String | 1 min | Space creation rate limit (10/min) |
 | `flagged_sessions` | Set | — | Session IDs flagged for suspicious activity |
 | `blocked:<sessionId>` | String | 1h | Blocked session (auto-revert triggered) |
 | `admin_attempts:<ip>` | String | 15min | Failed admin auth attempt counter |
@@ -160,7 +192,8 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` �
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check, returns `{status:'ok'}`. No auth required. |
-| `GET` | `/pixels?n=&s=&e=&w=` | Viewport query: pixels in bounding box. Always includes children. |
+| `GET` | `/pixels?n=&s=&e=&w=&space=` | Viewport query: pixels in bounding box. Always includes children. Optional `space` param. |
+| `POST` | `/spaces` | Create space: returns `{ slug }`. Rate-limited 10/min per IP. No auth required. |
 | `POST` | `/pixels` | Save parent pixel (admin only). Erases children, broadcasts. |
 | `POST` | `/pixels/child` | Save child pixel (admin only). Broadcasts. |
 | `POST` | `/admin/verify` | Verify admin API key. Rate limited: 5 attempts per IP, 15min lockout. |
@@ -168,12 +201,14 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` �
 | `GET` | `/admin/session/:sessionId` | Get paint log for a session (requires auth) |
 | `GET` | `/admin/flagged` | List flagged sessions (requires auth) |
 | `POST` | `/admin/revert` | Revert all paints by a session (requires auth) |
-| `DELETE` | `/admin/region?n=&s=&e=&w=` | Erase all pixels in bounding box (requires auth). Broadcasts deletions. |
+| `DELETE` | `/admin/region?n=&s=&e=&w=&space=` | Erase all pixels in bounding box (requires auth). Optional `space` param. Broadcasts deletions. |
 | `WS` | WebSocket connection | Real-time updates, painting, ping/pong, viewport subscription |
 
 ### WebSocket protocol
 
 Connection: `wss://api.pixhood.art` (max 10 concurrent connections per IP). Origin header validated against allowlist (`pixhood.art`, `*.pixhood.art`, `localhost`, `127.0.0.1`). Connections without valid Origin rejected with 403 at handshake. Max WS payload 10KB.
+
+**Space**: Client connects with `?space=<slug>` query param. Server stores `ws.space` on the connection (immutable for its lifetime). All broadcasts are scoped to clients in the same space. Client never sends space in per-message payloads.
 
 **Server → Client:**
 - `{ type: "pixel", data }` — pixel painted (viewport-scoped broadcast)
@@ -237,8 +272,9 @@ Every paint is logged with the previous pixel state for potential revert. The so
 |---------|-----------|-----------|
 | Per-session burst | 10 paints/sec | Paint log `ZCOUNT` in 1s window |
 | Per-session sustained | 60 paints/min | Paint log `ZCOUNT` in 60s window |
-| Per-IP writes | 120/min | `INCR` + `EXPIRE` on `ratelimit:write:<ip>` |
-| Per-IP reads | 300/min | `INCR` + `EXPIRE` on `ratelimit:read:<ip>` |
+| Per-IP per-space writes | 120/min | `INCR` + `EXPIRE` on `space:ratelimit:write:<ip>:<space>` |
+| Per-IP reads | 300/min | `INCR` + `EXPIRE` on `ratelimit:read:<ip>` (global) |
+| Per-IP space creation | 10/min | `INCR` + `EXPIRE` on `ratelimit:space_create:<ip>` |
 
 Write rate limit checks use a single Redis pipeline (`checkWriteRateLimitsBatch`) combining INCR+PEXPIRE+ZREMRANGEBYSCORE+ZCOUNT×2 in one round-trip.
 

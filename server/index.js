@@ -14,6 +14,8 @@ const CONSTANTS = {
 const COLOR_RE = /^#[0-9a-f]{6}$/i;
 const TILE_KEY_RE = /^-?\d+(_-?\d+)+$/;
 const SESSION_ID_RE = /^sess_[a-z0-9]{2,50}$/;
+const SPACE_CREATE_MAX = 10;
+const SPACE_CREATE_WINDOW_MS = 60000;
 
 function validatePaintParent(msg) {
   const { tileKey, lat, lng, color, id } = msg;
@@ -36,6 +38,12 @@ function validatePaintChild(msg) {
   return true;
 }
 
+function parseSpaceParam(url) {
+  const space = url.searchParams.get('space');
+  if (!space) return null;
+  return redis.SPACE_SLUG_RE.test(space) ? space : null;
+}
+
 const PORT = process.env.PORT || 3000;
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`;
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || null;
@@ -46,7 +54,7 @@ const revertingSessions = new Set();
 
 function setCORS(res) {
   res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 }
 
@@ -143,9 +151,9 @@ function sendRateLimited(res, retryAfter) {
   res.end(JSON.stringify({ error: 'Too many requests', retryAfter }));
 }
 
-async function checkWriteRateLimits(ip, sessionId) {
+async function checkWriteRateLimits(ip, sessionId, space) {
   const result = await redis.checkWriteRateLimitsBatch(
-    ip, sessionId,
+    ip, sessionId, space,
     S.RATE_LIMITS.IP_WRITE.max, S.RATE_LIMITS.IP_WRITE.windowMs,
     S.RATE_LIMITS.SESSION_BURST.windowMs, S.RATE_LIMITS.SESSION_BURST.max,
     S.RATE_LIMITS.SESSION_SUSTAINED.windowMs, S.RATE_LIMITS.SESSION_SUSTAINED.max
@@ -175,6 +183,18 @@ async function shouldAutoRevert(sessionId, lat, lng) {
   return null;
 }
 
+function broadcastRevertResult(result) {
+  for (const tile of result.tiles) {
+    if (tile.action === 'restored' && tile.pixel) {
+      broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } }, tile.space);
+    } else if (tile.action === 'deleted') {
+      broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } }, tile.space);
+    } else if (tile.action === 'child_reverted' && tile.parentData) {
+      broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData }, tile.space);
+    }
+  }
+}
+
 async function handlePaintParent(ws, msg) {
   const sessionId = ws.sessionId;
   if (!sessionId) {
@@ -194,7 +214,8 @@ async function handlePaintParent(ws, msg) {
   }
 
   const ip = getWSIP(ws);
-  const retryAfter = await checkWriteRateLimits(ip, sessionId);
+  const space = ws.space;
+  const retryAfter = await checkWriteRateLimits(ip, sessionId, space);
   if (retryAfter) {
     ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'rate_limited', retryAfter }));
     return;
@@ -215,9 +236,9 @@ async function handlePaintParent(ws, msg) {
     sessionId
   };
 
-  const prevRaw = await redis.getPixelRaw(pixel.id);
+  const prevRaw = await redis.getPixelRaw(pixel.id, space);
   const prevPixel = prevRaw ? JSON.parse(prevRaw) : null;
-  const prevChildrenRaw = await redis.getSubpixelsAll(pixel.id);
+  const prevChildrenRaw = await redis.getSubpixelsAll(pixel.id, space);
   const prevChildren = Object.keys(prevChildrenRaw).length > 0
     ? Object.values(prevChildrenRaw).map(v => JSON.parse(v))
     : null;
@@ -225,6 +246,7 @@ async function handlePaintParent(ws, msg) {
   await redis.logPaint(sessionId, {
     tileKey: pixel.id,
     type: 'parent',
+    space,
     lat: pixel.lat,
     lng: pixel.lng,
     color: pixel.color,
@@ -240,18 +262,10 @@ async function handlePaintParent(ws, msg) {
     if (revertingSessions.has(sessionId)) return;
     revertingSessions.add(sessionId);
     try {
-      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
+      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason} space=${space || 'global'}`);
       const result = await redis.revertSession(sessionId);
       await redis.blockSession(sessionId);
-      for (const tile of result.tiles) {
-        if (tile.action === 'restored' && tile.pixel) {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
-        } else if (tile.action === 'deleted') {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
-        } else if (tile.action === 'child_reverted' && tile.parentData) {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
-        }
-      }
+      broadcastRevertResult(result);
       ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
       ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
     } finally {
@@ -279,10 +293,10 @@ async function handlePaintParent(ws, msg) {
 
   updateSessionPaint(sessionId, pixel.lat, pixel.lng);
 
-  await redis.deleteSubpixels(pixel.id);
-  await redis.savePixel(pixel);
-  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } });
-  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } });
+  await redis.deleteSubpixels(pixel.id, space);
+  await redis.savePixel(pixel, space);
+  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space);
+  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } }, space);
   ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }));
 }
 
@@ -305,7 +319,8 @@ async function handlePaintChild(ws, msg) {
   }
 
   const ip = getWSIP(ws);
-  const retryAfter = await checkWriteRateLimits(ip, sessionId);
+  const space = ws.space;
+  const retryAfter = await checkWriteRateLimits(ip, sessionId, space);
   if (retryAfter) {
     ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'rate_limited', retryAfter }));
     return;
@@ -330,12 +345,13 @@ async function handlePaintChild(ws, msg) {
     sessionId
   };
 
-  const prevChildRaw = await redis.getChildRaw(parentId, childKey);
+  const prevChildRaw = await redis.getChildRaw(parentId, childKey, space);
   const prevChild = prevChildRaw ? JSON.parse(prevChildRaw) : null;
 
   await redis.logPaint(sessionId, {
     tileKey: parentId,
     type: 'child',
+    space,
     childKey,
     lat: childPixel.lat,
     lng: childPixel.lng,
@@ -350,18 +366,10 @@ async function handlePaintChild(ws, msg) {
     if (revertingSessions.has(sessionId)) return;
     revertingSessions.add(sessionId);
     try {
-      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason}`);
+      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason} space=${space || 'global'}`);
       const result = await redis.revertSession(sessionId);
       await redis.blockSession(sessionId);
-      for (const tile of result.tiles) {
-        if (tile.action === 'restored' && tile.pixel) {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
-        } else if (tile.action === 'deleted') {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
-        } else if (tile.action === 'child_reverted' && tile.parentData) {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
-        }
-      }
+      broadcastRevertResult(result);
       ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
       ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
     } finally {
@@ -389,8 +397,8 @@ async function handlePaintChild(ws, msg) {
 
   updateSessionPaint(sessionId, childPixel.lat, childPixel.lng);
 
-  const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
-  broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } });
+  const { children } = await redis.saveChildPixel(parentId, childKey, childPixel, space);
+  broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } }, space);
   ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }));
 }
 
@@ -407,6 +415,26 @@ async function handleRequest(req, res) {
     setCORS(res);
     res.writeHead(204);
     res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/spaces') {
+    setCORS(res);
+    try {
+      const ip = getClientIP(req);
+      const createLimit = await redis.checkIPRateLimit(ip, 'space_create', SPACE_CREATE_MAX, SPACE_CREATE_WINDOW_MS);
+      if (!createLimit.allowed) {
+        sendRateLimited(res, createLimit.retryAfter);
+        return;
+      }
+      const slug = crypto.randomBytes(9).toString('base64url').slice(0, 12);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ slug }));
+    } catch (err) {
+      console.error('POST /spaces error:', err);
+      res.writeHead(500);
+      res.end('Internal server error');
+    }
     return;
   }
 
@@ -431,13 +459,14 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const { pixels, staleKeys } = await redis.getPixelsInViewport(n, s, e, w);
+      const space = parseSpaceParam(url);
+      const { pixels, staleKeys } = await redis.getPixelsInViewport(n, s, e, w, space);
 
       if (staleKeys.length > 0) {
-        redis.cleanupGeoIndex(staleKeys).catch(err => console.error('Geo cleanup error:', err));
+        redis.cleanupGeoIndex(staleKeys, space).catch(err => console.error('Geo cleanup error:', err));
       }
 
-      const childrenArrays = await redis.getSubpixelsMulti(pixels.map(p => p.id));
+      const childrenArrays = await redis.getSubpixelsMulti(pixels.map(p => p.id), space);
       const result = pixels.map((pixel, i) => ({
         ...pixel,
         hasChildren: childrenArrays[i].length > 0,
@@ -465,10 +494,11 @@ async function handleRequest(req, res) {
     try {
       const body = await readBody(req);
       const pixel = JSON.parse(body);
-      await redis.deleteSubpixels(pixel.id);
-      await redis.savePixel(pixel);
-      broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } });
-      broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } });
+      const space = pixel.space || null;
+      await redis.deleteSubpixels(pixel.id, space);
+      await redis.savePixel(pixel, space);
+      broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space);
+      broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } }, space);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -491,8 +521,9 @@ async function handleRequest(req, res) {
     try {
       const body = await readBody(req);
       const { parentId, childKey, childPixel } = JSON.parse(body);
-      const { children } = await redis.saveChildPixel(parentId, childKey, childPixel);
-      broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } });
+      const space = childPixel.space || null;
+      const { children } = await redis.saveChildPixel(parentId, childKey, childPixel, space);
+      broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } }, space);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     } catch (err) {
@@ -589,15 +620,7 @@ async function handleRequest(req, res) {
       await redis.unflagSession(sessionId);
       await redis.unblockSession(sessionId);
 
-      for (const tile of result.tiles) {
-        if (tile.action === 'restored' && tile.pixel) {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } });
-        } else if (tile.action === 'deleted') {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } });
-        } else if (tile.action === 'child_reverted' && tile.parentData) {
-          broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData });
-        }
-      }
+      broadcastRevertResult(result);
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, reverted: result.reverted }));
@@ -655,10 +678,11 @@ async function handleRequest(req, res) {
         res.end(JSON.stringify({ error: 'Invalid bounds' }));
         return;
       }
-      const deleted = await redis.deletePixelsInRegion(n, s, e, w);
+      const space = parseSpaceParam(url);
+      const deleted = await redis.deletePixelsInRegion(n, s, e, w, space);
       for (const pixel of deleted) {
-        broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: pixel.id } });
-        broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } });
+        broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: pixel.id } }, space);
+        broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, deleted: deleted.length }));
@@ -667,13 +691,6 @@ async function handleRequest(req, res) {
       res.writeHead(500);
       res.end('Internal server error');
     }
-    return;
-  }
-
-  if (req.method === 'OPTIONS') {
-    setCORS(res);
-    res.writeHead(204);
-    res.end();
     return;
   }
 
@@ -710,10 +727,13 @@ function inBounds(lat, lng, b) {
   return lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e;
 }
 
-function broadcastToViewport(lat, lng, data) {
+function broadcastToViewport(lat, lng, data, space) {
   const msg = JSON.stringify(data);
   for (const client of wss.clients) {
-    if (client.readyState === CONSTANTS.WS_OPEN && client.viewport && inBounds(lat, lng, client.viewport)) {
+    if (client.readyState === CONSTANTS.WS_OPEN &&
+        client.viewport &&
+        inBounds(lat, lng, client.viewport) &&
+        client.space === space) {
       client.send(msg);
     }
   }
@@ -741,6 +761,10 @@ wss.on('connection', (ws, req) => {
   ws.viewport = null;
   ws.sessionId = null;
 
+  const wsUrl = new URL(req.url, 'http://localhost');
+  const spaceParam = wsUrl.searchParams.get('space');
+  ws.space = (spaceParam && redis.SPACE_SLUG_RE.test(spaceParam)) ? spaceParam : null;
+
   const currentCount = countIPConnections(ip);
   if (currentCount >= S.MAX_WS_PER_IP) {
     console.warn(`[ip-limit] rejecting connection from ${ip} (${currentCount} active)`);
@@ -750,7 +774,7 @@ wss.on('connection', (ws, req) => {
 
   const newSessionId = 'sess_' + crypto.randomBytes(16).toString('hex');
 
-  console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount + 1})`);
+  console.log(`WS client connected (${getConnectedCount()} total, ${ip} has ${currentCount + 1})${ws.space ? ` space=${ws.space}` : ''}`);
 
   ws.on('message', raw => {
     try {

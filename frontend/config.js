@@ -1,9 +1,11 @@
 const _local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const _backendHost = _local ? 'http://localhost:3000' : 'https://api.pixhood.art';
+const _spaceMatch = location.pathname.match(/^\/s\/([a-zA-Z0-9]{12})$/);
 
 const CONFIG = {
   API_URL: _backendHost,
   WS_URL: _local ? 'ws://localhost:3000' : 'wss://api.pixhood.art',
+  SPACE: _spaceMatch ? _spaceMatch[1] : null,
 
   TILE_SIZE_M: 18.4,
 
