@@ -357,10 +357,13 @@ function onPaintError(reason, count, retryAfter) {
     showToast('Connecting \u2014 try again in a moment');
     scheduleViewportRefresh();
   } else if (reason === 'timeout') {
-    showToast('Paint may not have saved — server slow to respond');
+    showToast('Paint may not have saved \u2014 server slow to respond');
     scheduleViewportRefresh();
   } else if (reason === 'disconnect') {
     showToast(`${count} paint(s) didn\u2019t save \u2014 reconnecting`);
+    scheduleViewportRefresh();
+  } else if (reason === 'no_connection') {
+    showToast('Not connected \u2014 try again');
     scheduleViewportRefresh();
   } else {
     showToast('Paint failed to save');
@@ -389,6 +392,7 @@ async function refreshViewport() {
     updateBoundaryVisualization();
   } catch (err) {
     console.error('Viewport refresh failed:', err);
+    showToast('Could not refresh \u2014 check connection');
   }
 }
 
@@ -417,7 +421,11 @@ async function proceedToMap(geoResult, pixelsPromise) {
 
   setViewportReadyCallback(() => getViewportBounds());
 
-  connectWebSocket(onWSPixel, onWSChild, onWSDelete, onPaintError, onWSBlocked);
+  connectWebSocket(onWSPixel, onWSChild, onWSDelete, onPaintError, onWSBlocked, (status) => {
+    if (status === 'disconnected') {
+      showToast('Connection lost — reconnecting\u2026');
+    }
+  });
 
   const vb = getViewportBounds();
   sendViewport(vb);

@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { timingSafeEqual } = crypto;
 const { WebSocketServer } = require('ws');
 const redis = require('./redis');
+const safeParse = redis.safeParse;
 const WS_TYPES = require('./shared/ws-types');
 const S = require('./suspicion');
 
@@ -81,6 +82,11 @@ function readBody(req) {
 function sendTooLarge(res) {
   res.writeHead(413, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Payload too large' }));
+}
+
+function sendError(res, status, message) {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: message }));
 }
 
 function getClientIP(req) {
@@ -237,10 +243,10 @@ async function handlePaintParent(ws, msg) {
   };
 
   const prevRaw = await redis.getPixelRaw(pixel.id, space);
-  const prevPixel = prevRaw ? JSON.parse(prevRaw) : null;
+  const prevPixel = prevRaw ? safeParse(prevRaw) : null;
   const prevChildrenRaw = await redis.getSubpixelsAll(pixel.id, space);
   const prevChildren = Object.keys(prevChildrenRaw).length > 0
-    ? Object.values(prevChildrenRaw).map(v => JSON.parse(v))
+    ? Object.values(prevChildrenRaw).map(v => safeParse(v)).filter(Boolean)
     : null;
 
   await redis.logPaint(sessionId, {
@@ -266,8 +272,11 @@ async function handlePaintParent(ws, msg) {
       const result = await redis.revertSession(sessionId);
       await redis.blockSession(sessionId);
       broadcastRevertResult(result);
-      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
-      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
+      try { ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' })); } catch {}
+      try { ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED })); } catch {}
+    } catch (err) {
+      console.error(`[auto-revert] failed for session=${sessionId}:`, err);
+      try { await redis.blockSession(sessionId); } catch {}
     } finally {
       revertingSessions.delete(sessionId);
     }
@@ -346,7 +355,7 @@ async function handlePaintChild(ws, msg) {
   };
 
   const prevChildRaw = await redis.getChildRaw(parentId, childKey, space);
-  const prevChild = prevChildRaw ? JSON.parse(prevChildRaw) : null;
+  const prevChild = prevChildRaw ? safeParse(prevChildRaw) : null;
 
   await redis.logPaint(sessionId, {
     tileKey: parentId,
@@ -370,8 +379,11 @@ async function handlePaintChild(ws, msg) {
       const result = await redis.revertSession(sessionId);
       await redis.blockSession(sessionId);
       broadcastRevertResult(result);
-      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
-      ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED }));
+      try { ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' })); } catch {}
+      try { ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED })); } catch {}
+    } catch (err) {
+      console.error(`[auto-revert] failed for session=${sessionId}:`, err);
+      try { await redis.blockSession(sessionId); } catch {}
     } finally {
       revertingSessions.delete(sessionId);
     }
@@ -438,7 +450,13 @@ async function handlePaintErase(ws, msg) {
   }
 
   const { tileKey, lat, lng } = msg;
-  const prev = await redis.erasePixel(tileKey, space);
+
+  const prevRaw = await redis.getPixelRaw(tileKey, space);
+  const prevPixel = prevRaw ? safeParse(prevRaw) : null;
+  const prevChildrenRaw = await redis.getSubpixelsAll(tileKey, space);
+  const prevChildren = Object.keys(prevChildrenRaw).length > 0
+    ? Object.values(prevChildrenRaw).map(v => safeParse(v)).filter(Boolean)
+    : null;
 
   await redis.logPaint(sessionId, {
     tileKey,
@@ -446,12 +464,53 @@ async function handlePaintErase(ws, msg) {
     space,
     lat,
     lng,
-    previousColor: prev.prevPixel ? prev.prevPixel.color : null,
-    previousLat: prev.prevPixel ? prev.prevPixel.lat : null,
-    previousLng: prev.prevPixel ? prev.prevPixel.lng : null,
-    previousSessionId: prev.prevPixel ? prev.prevPixel.sessionId : null,
-    previousChildren: prev.prevChildren
+    previousColor: prevPixel ? prevPixel.color : null,
+    previousLat: prevPixel ? prevPixel.lat : null,
+    previousLng: prevPixel ? prevPixel.lng : null,
+    previousSessionId: prevPixel ? prevPixel.sessionId : null,
+    previousChildren
   });
+
+  await redis.erasePixel(tileKey, space);
+
+  const autoRevertReason = await shouldAutoRevert(sessionId, lat, lng);
+  if (autoRevertReason) {
+    if (revertingSessions.has(sessionId)) return;
+    revertingSessions.add(sessionId);
+    try {
+      console.warn(`[auto-revert] session=${sessionId} reason=${autoRevertReason} space=${space || 'global'}`);
+      const result = await redis.revertSession(sessionId);
+      await redis.blockSession(sessionId);
+      broadcastRevertResult(result);
+      try { ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' })); } catch {}
+      try { ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_BLOCKED })); } catch {}
+    } catch (err) {
+      console.error(`[auto-revert] failed for session=${sessionId}:`, err);
+      try { await redis.blockSession(sessionId); } catch {}
+    } finally {
+      revertingSessions.delete(sessionId);
+    }
+    return;
+  }
+
+  const suspicion = S.checkPaintSuspicion(sessionStates.get(sessionId), lat, lng, Date.now());
+  if (suspicion.suspicious) {
+    console.warn(`[suspicion] session=${sessionId} reasons=${suspicion.reasons.join(',')} lat=${lat} lng=${lng}`);
+    redis.flagSession(sessionId).catch(err => console.error('Flag session error:', err));
+    const now = Date.now();
+    const state = sessionStates.get(sessionId);
+    for (const reason of suspicion.reasons) {
+      if (reason === 'excessive_distance') {
+        if (S.hasFreePass(state, now)) {
+          S.useFreePass(state, now);
+          continue;
+        }
+      }
+      addSessionFlag(sessionId, reason);
+    }
+  }
+
+  updateSessionPaint(sessionId, lat, lng);
 
   broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: tileKey } }, space);
   broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tileKey } }, space);
@@ -505,6 +564,8 @@ async function handleRequest(req, res) {
     return;
   }
 
+  try {
+
   if (req.method === 'POST' && url.pathname === '/spaces') {
     setCORS(res);
     try {
@@ -519,8 +580,7 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ slug }));
     } catch (err) {
       console.error('POST /spaces error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
@@ -541,8 +601,7 @@ async function handleRequest(req, res) {
       const w = parseFloat(url.searchParams.get('w'));
 
       if (isNaN(n) || isNaN(s) || isNaN(e) || isNaN(w)) {
-        res.writeHead(400);
-        res.end('Missing bounds params: n, s, e, w');
+        sendError(res, 400, 'Missing bounds params: n, s, e, w');
         return;
       }
 
@@ -564,8 +623,7 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify(result));
     } catch (err) {
       console.error('GET /pixels error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
@@ -591,8 +649,7 @@ async function handleRequest(req, res) {
     } catch (err) {
       if (err.message === 'Body too large') { sendTooLarge(res); return; }
       console.error('POST /pixels error:', err);
-      res.writeHead(400);
-      res.end('Bad request');
+      sendError(res, 400, 'Bad request');
     }
     return;
   }
@@ -616,8 +673,7 @@ async function handleRequest(req, res) {
     } catch (err) {
       if (err.message === 'Body too large') { sendTooLarge(res); return; }
       console.error('POST /pixels/child error:', err);
-      res.writeHead(400);
-      res.end('Bad request');
+      sendError(res, 400, 'Bad request');
     }
     return;
   }
@@ -640,8 +696,7 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ sessionId, paints, flagged, blocked, state }));
     } catch (err) {
       console.error('GET /admin/session error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
@@ -660,8 +715,7 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ sessions }));
     } catch (err) {
       console.error('GET /admin/sessions error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
@@ -680,8 +734,7 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ sessions }));
     } catch (err) {
       console.error('GET /admin/flagged error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
@@ -698,8 +751,7 @@ async function handleRequest(req, res) {
       const body = await readBody(req);
       const { sessionId } = JSON.parse(body);
       if (!sessionId) {
-        res.writeHead(400);
-        res.end('Missing sessionId');
+        sendError(res, 400, 'Missing sessionId');
         return;
       }
 
@@ -714,8 +766,7 @@ async function handleRequest(req, res) {
     } catch (err) {
       if (err.message === 'Body too large') { sendTooLarge(res); return; }
       console.error('POST /admin/revert error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
@@ -775,14 +826,18 @@ async function handleRequest(req, res) {
       res.end(JSON.stringify({ ok: true, deleted: deleted.length }));
     } catch (err) {
       console.error('DELETE /admin/region error:', err);
-      res.writeHead(500);
-      res.end('Internal server error');
+      sendError(res, 500, 'Internal server error');
     }
     return;
   }
 
-  res.writeHead(404);
-  res.end('Not found');
+  sendError(res, 404, 'Not found');
+  } catch (err) {
+    console.error('Unhandled request error:', err);
+    if (!res.headersSent) {
+      sendError(res, 500, 'Internal server error');
+    }
+  }
 }
 
 function isOriginAllowed(origin) {
@@ -798,6 +853,15 @@ function isOriginAllowed(origin) {
 }
 
 const server = http.createServer(handleRequest);
+
+process.on('unhandledRejection', err => {
+  console.error('Unhandled rejection:', err);
+});
+
+process.on('uncaughtException', err => {
+  console.error('Uncaught exception:', err);
+});
+
 const wss = new WebSocketServer({
   server,
   maxPayload: 10 * 1024,

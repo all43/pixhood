@@ -103,6 +103,7 @@ let _onChild = null;
 let _onDelete = null;
 let _onPaintError = null;
 let _onBlocked = null;
+let _onStatusChange = null;
 let _retryDelay = 1000;
 let _heartbeatTimer = null;
 let _paintSeq = 0;
@@ -112,7 +113,10 @@ let _reconnectTimer = null;
 function nextPaintId() { return ++_paintSeq; }
 
 function _sendPaint(msg) {
-  if (!_ws || _ws.readyState !== 1) return;
+  if (!_ws || _ws.readyState !== 1) {
+    if (_onPaintError) _onPaintError('no_connection');
+    return;
+  }
   _ws.send(JSON.stringify(msg));
   const timer = setTimeout(() => {
     _pendingPaints.delete(msg.id);
@@ -128,12 +132,13 @@ function _flushPending() {
   if (count > 0 && _onPaintError) _onPaintError('disconnect', count);
 }
 
-function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked) {
+function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked, onStatusChange) {
   _onPixel = onPixel;
   _onChild = onChild || null;
   _onDelete = onDelete || null;
   _onPaintError = onPaintError || null;
   _onBlocked = onBlocked || null;
+  _onStatusChange = onStatusChange || null;
   _openWS();
 }
 
@@ -158,6 +163,7 @@ function _openWS() {
   _ws.addEventListener('open', () => {
     console.log('WS connected');
     _retryDelay = CONFIG.WS_RETRY_INITIAL_MS;
+    if (_onStatusChange) _onStatusChange('connected');
     _startHeartbeat();
     const sid = getSessionId();
     const zoom = typeof getCurrentZoom === 'function' ? getCurrentZoom() : 0;
@@ -209,6 +215,7 @@ function _openWS() {
     console.log(`WS closed — reconnecting in ${_retryDelay}ms`);
     _stopHeartbeat();
     _flushPending();
+    if (_onStatusChange) _onStatusChange('disconnected');
     _reconnectTimer = setTimeout(_openWS, _retryDelay);
     _retryDelay = Math.min(_retryDelay * 2, CONFIG.WS_RETRY_MAX_MS);
   });
