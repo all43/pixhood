@@ -680,8 +680,14 @@ html, body {
 /* ── Mobile adjustments ── */
 @media (max-width: 480px) {
   #logo {
-    font-size: 15px;
-    letter-spacing: 2px;
+    gap: 0;
+  }
+  .logo-text {
+    display: none;
+  }
+  .logo-icon {
+    width: 40px;
+    height: 40px;
   }
   #palette {
     display: grid;
