@@ -100,11 +100,13 @@ html, body {
 
 .swatch-tool:hover {
   border-color: rgba(255,255,255,0.4);
+  transform: none;
 }
 
 .swatch-tool.selected {
   border-color: #fff;
   box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px #000;
+  transform: none;
 }
 
 .swatch-undo {
