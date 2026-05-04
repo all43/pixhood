@@ -402,6 +402,93 @@ async function handlePaintChild(ws, msg) {
   ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }));
 }
 
+async function handlePaintErase(ws, msg) {
+  const sessionId = ws.sessionId;
+  if (!sessionId) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_session' }));
+    return;
+  }
+
+  const sessionState = sessionStates.get(sessionId);
+  if (!sessionState || !sessionState.viewport) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_viewport' }));
+    return;
+  }
+
+  if (await redis.isSessionBlocked(sessionId)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'blocked' }));
+    return;
+  }
+
+  const ip = getWSIP(ws);
+  const space = ws.space;
+  const retryAfter = await checkWriteRateLimits(ip, sessionId, space);
+  if (retryAfter) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'rate_limited', retryAfter }));
+    return;
+  }
+
+  if (!msg.tileKey || !TILE_KEY_RE.test(msg.tileKey)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'invalid_input' }));
+    return;
+  }
+  if (typeof msg.lat !== 'number' || typeof msg.lng !== 'number' || msg.lat < -90 || msg.lat > 90 || msg.lng < -180 || msg.lng > 180) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'invalid_input' }));
+    return;
+  }
+
+  const { tileKey, lat, lng } = msg;
+  const prev = await redis.erasePixel(tileKey, space);
+
+  await redis.logPaint(sessionId, {
+    tileKey,
+    type: 'erase',
+    space,
+    lat,
+    lng,
+    previousColor: prev.prevPixel ? prev.prevPixel.color : null,
+    previousLat: prev.prevPixel ? prev.prevPixel.lat : null,
+    previousLng: prev.prevPixel ? prev.prevPixel.lng : null,
+    previousSessionId: prev.prevPixel ? prev.prevPixel.sessionId : null,
+    previousChildren: prev.prevChildren
+  });
+
+  broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: tileKey } }, space);
+  broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tileKey } }, space);
+  ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }));
+}
+
+async function handleUndoPaint(ws, msg) {
+  const sessionId = ws.sessionId;
+  if (!sessionId) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'no_session' }));
+    return;
+  }
+
+  const count = Math.min(Math.max(typeof msg.count === 'number' ? Math.floor(msg.count) : 1, 1), 50);
+
+  if (revertingSessions.has(sessionId)) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'server_error' }));
+    return;
+  }
+  revertingSessions.add(sessionId);
+  try {
+    const result = await redis.undoLastPaints(sessionId, count);
+    for (const tile of result.tiles) {
+      if (tile.action === 'restored' && tile.pixel) {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.pixel, hasChildren: false } }, tile.space);
+      } else if (tile.action === 'deleted') {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } }, tile.space);
+      } else if (tile.action === 'child_reverted' && tile.parentData) {
+        broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData }, tile.space);
+      }
+    }
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_UNDO_RESULT, id: msg.id, count: result.count }));
+  } finally {
+    revertingSessions.delete(sessionId);
+  }
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost`);
 
@@ -813,6 +900,20 @@ wss.on('connection', (ws, req) => {
       } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_CHILD) {
         handlePaintChild(ws, msg).catch(err => {
           console.error('handlePaintChild error:', err);
+          try {
+            ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'server_error' }));
+          } catch {}
+        });
+      } else if (msg.type === CONSTANTS.WS_TYPE_PAINT_ERASE) {
+        handlePaintErase(ws, msg).catch(err => {
+          console.error('handlePaintErase error:', err);
+          try {
+            ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'server_error' }));
+          } catch {}
+        });
+      } else if (msg.type === CONSTANTS.WS_TYPE_UNDO_PAINT) {
+        handleUndoPaint(ws, msg).catch(err => {
+          console.error('handleUndoPaint error:', err);
           try {
             ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'server_error' }));
           } catch {}

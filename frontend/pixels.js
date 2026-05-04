@@ -80,6 +80,24 @@ async function writeChildPixel(parentKey, lat, lng, color) {
   return { id: sub.key, parentId: parentKey, subX: sub.subX, subY: sub.subY, lat: sub.lat, lng: sub.lng, color };
 }
 
+async function writeErasePixel(lat, lng) {
+  const tile = snapToTile(lat, lng);
+  const msg = {
+    type: CONFIG.WS_TYPE_PAINT_ERASE,
+    id: nextPaintId(),
+    tileKey: tile.key,
+    lat: tile.lat,
+    lng: tile.lng
+  };
+  _sendPaint(msg);
+  return { id: tile.key, lat: tile.lat, lng: tile.lng };
+}
+
+function sendUndoPaint(count) {
+  if (!_ws || _ws.readyState !== 1) return;
+  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_UNDO_PAINT, id: nextPaintId(), count }));
+}
+
 let _ws = null;
 let _onPixel = null;
 let _onChild = null;
@@ -176,6 +194,11 @@ function _openWS() {
         const timer = _pendingPaints.get(msg.id);
         if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
         if (_onPaintError) _onPaintError(msg.reason, 1, msg.retryAfter);
+      }
+      if (msg.type === CONFIG.WS_TYPE_UNDO_RESULT) {
+        const timer = _pendingPaints.get(msg.id);
+        if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
+        scheduleViewportRefresh();
       }
       if (msg.type === CONFIG.WS_TYPE_BLOCKED && _onBlocked) _onBlocked();
     } catch (err) {

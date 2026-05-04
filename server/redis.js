@@ -318,6 +318,115 @@ async function revertSession(sessionId) {
   return { reverted: revertedCount, tiles: tileResults };
 }
 
+async function undoLastPaints(sessionId, count) {
+  const key = paintLogKey(sessionId);
+  const entries = await client.zRevRangeWithScores(key, 0, count - 1);
+  if (entries.length === 0) return { reverted: 0, tiles: [] };
+
+  const paints = entries.map(e => ({ ...JSON.parse(e.value), timestamp: e.score }));
+  for (const e of entries) {
+    await client.zRem(key, e.value);
+  }
+
+  const tilesTouched = new Map();
+  for (const paint of paints) {
+    const tk = paint.tileKey;
+    if (!tilesTouched.has(tk)) tilesTouched.set(tk, []);
+    tilesTouched.get(tk).push(paint);
+  }
+
+  let revertedCount = 0;
+  const tileResults = [];
+
+  for (const [tileKey, tileEntries] of tilesTouched) {
+    tileEntries.sort((a, b) => a.timestamp - b.timestamp);
+    const space = tileEntries[0].space || null;
+    const hasParentPaint = tileEntries.some(e => e.type === 'parent' || e.type === 'erase');
+
+    if (hasParentPaint) {
+      const firstParent = tileEntries.find(e => e.type === 'parent' || e.type === 'erase');
+      if (firstParent.previousColor != null) {
+        const pixelData = {
+          id: tileKey,
+          lat: firstParent.previousLat,
+          lng: firstParent.previousLng,
+          color: firstParent.previousColor,
+          paintedAt: new Date().toISOString(),
+          sessionId: firstParent.previousSessionId || 'revert'
+        };
+        const multi = client.multi();
+        multi.set(pixelKey(tileKey, space), JSON.stringify(pixelData), { EX: TTL });
+        multi.geoAdd(geoKey(space), { longitude: pixelData.lng, latitude: pixelData.lat, member: tileKey });
+        await multi.exec();
+
+        if (firstParent.previousChildren && firstParent.previousChildren.length > 0) {
+          const subKey = subpixelsKey(tileKey, space);
+          const subMulti = client.multi();
+          for (const child of firstParent.previousChildren) {
+            subMulti.hSet(subKey, `${child.subX}_${child.subY}`, JSON.stringify(child));
+          }
+          subMulti.expire(subKey, TTL);
+          await subMulti.exec();
+        } else {
+          await client.del(subpixelsKey(tileKey, space));
+        }
+        tileResults.push({ tileKey, space, lat: pixelData.lat, lng: pixelData.lng, action: 'restored', pixel: pixelData });
+      } else {
+        const lat = firstParent.lat;
+        const lng = firstParent.lng;
+        await client.del(pixelKey(tileKey, space));
+        await client.del(subpixelsKey(tileKey, space));
+        await client.zRem(geoKey(space), tileKey);
+        tileResults.push({ tileKey, space, lat, lng, action: 'deleted' });
+      }
+    } else {
+      for (const entry of tileEntries) {
+        if (entry.previousChildColor != null) {
+          await client.hSet(subpixelsKey(tileKey, space), entry.childKey, JSON.stringify({
+            id: `${tileKey}_${entry.childKey}`,
+            parentId: tileKey,
+            subX: entry.previousSubX,
+            subY: entry.previousSubY,
+            color: entry.previousChildColor,
+            paintedAt: new Date().toISOString(),
+            sessionId: 'revert'
+          }));
+        } else {
+          await client.hDel(subpixelsKey(tileKey, space), entry.childKey);
+        }
+      }
+      await client.expire(subpixelsKey(tileKey, space), TTL);
+      const rawParent = await client.get(pixelKey(tileKey, space));
+      const parentData = rawParent ? JSON.parse(rawParent) : null;
+      tileResults.push({ tileKey, space, lat: tileEntries[0].lat, lng: tileEntries[0].lng, action: 'child_reverted', parentData });
+    }
+
+    revertedCount++;
+  }
+
+  return { reverted: revertedCount, tiles: tileResults, count: entries.length };
+}
+
+async function erasePixel(tileKey, space) {
+  const prevRaw = await client.get(pixelKey(tileKey, space));
+  const prevPixel = prevRaw ? JSON.parse(prevRaw) : null;
+  const prevChildrenRaw = await getSubpixelsAll(tileKey, space);
+  const prevChildren = Object.keys(prevChildrenRaw).length > 0
+    ? Object.values(prevChildrenRaw).map(v => JSON.parse(v))
+    : null;
+
+  await client.del(pixelKey(tileKey, space));
+  await client.del(subpixelsKey(tileKey, space));
+  await client.zRem(geoKey(space), tileKey);
+
+  return {
+    prevPixel,
+    prevChildren,
+    lat: prevPixel ? prevPixel.lat : null,
+    lng: prevPixel ? prevPixel.lng : null
+  };
+}
+
 async function blockSession(sessionId) {
   await client.set(`blocked:${sessionId}`, '1', { EX: 3600 });
 }
@@ -418,6 +527,8 @@ module.exports = {
   getFlaggedSessions,
   unflagSession,
   revertSession,
+  undoLastPaints,
+  erasePixel,
   blockSession,
   isSessionBlocked,
   unblockSession,

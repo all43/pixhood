@@ -89,6 +89,43 @@ html, body {
   box-shadow: 0 0 0 1px #444;
 }
 
+/* ── Tool swatches (undo, erase) ── */
+.swatch-tool {
+  background: #2a2a40;
+  border: 1px solid rgba(255,255,255,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.swatch-tool:hover {
+  border-color: rgba(255,255,255,0.4);
+}
+
+.swatch-tool.selected {
+  border-color: #fff;
+  box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 4px #000;
+}
+
+.swatch-undo {
+  user-select: none;
+}
+
+.swatch-undo svg {
+  width: 75%;
+  height: 75%;
+}
+
+.swatch-erase {
+  background-image:
+    linear-gradient(45deg, #555 25%, transparent 25%),
+    linear-gradient(-45deg, #555 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #555 75%),
+    linear-gradient(-45deg, transparent 75%, #555 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+}
+
 /* ── Map ── */
 #map {
   flex: 1;
@@ -648,7 +685,7 @@ html, body {
   }
   #palette {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(9, 1fr);
     flex: 1;
     max-width: none;
     gap: 4px;
@@ -658,20 +695,25 @@ html, body {
     height: auto;
     aspect-ratio: 1;
   }
-  /* Reverse only the second row (items 9-16) on mobile. */
-  #palette .swatch:nth-child(16) { order: 9; }
-  #palette .swatch:nth-child(15) { order: 10; }
-  #palette .swatch:nth-child(14) { order: 11; }
-  #palette .swatch:nth-child(13) { order: 12; }
-  #palette .swatch:nth-child(12) { order: 13; }
-  #palette .swatch:nth-child(11) { order: 14; }
-  #palette .swatch:nth-child(10) { order: 15; }
-  #palette .swatch:nth-child(9) { order: 16; }
   #locate-btn {
     bottom: 100px;
     width: 32px;
     height: 32px;
   }
+  .swatch-erase {
+    order: -1;
+  }
+  .swatch-undo {
+    order: 1;
+  }
+  #palette .swatch:nth-child(18) { order: 2; }
+  #palette .swatch:nth-child(17) { order: 3; }
+  #palette .swatch:nth-child(16) { order: 4; }
+  #palette .swatch:nth-child(15) { order: 5; }
+  #palette .swatch:nth-child(14) { order: 6; }
+  #palette .swatch:nth-child(13) { order: 7; }
+  #palette .swatch:nth-child(12) { order: 8; }
+  #palette .swatch:nth-child(11) { order: 9; }
   #location-banner {
     font-size: 11px;
     padding: 8px 10px;

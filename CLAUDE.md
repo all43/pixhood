@@ -48,7 +48,7 @@ pixhood/
 │   ├── style.css
 │   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE_M, Mercator projection, palette
 │   ├── grid.js        # Tile + sub-tile key computation
-│   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
+│   ├── pixels.js      # Viewport fetch, paint/erase/undo WS, heartbeat
 │   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
 │   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
 │   ├── admin.js       # Admin panel (loaded dynamically on #admin): token auth, sessions, inspect, region erase
@@ -175,7 +175,7 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 | `space:<slug>:pixel:<tileKey>` | String | 24h | Parent pixel JSON (space-scoped) |
 | `space:<slug>:subpixels:<tileKey>` | Hash | 24h | Child pixels (space-scoped) |
 | `space:<slug>:pixels:geo` | Sorted Set | — | Viewport geo index (space-scoped) |
-| `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with `space` field + previous state for revert |
+| `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with `type` (`parent`/`child`/`erase`), `space` field + previous state for revert |
 | `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (global reads) |
 | `space:ratelimit:write:<ip>:<space>` | String | 1 min | Per-space IP write rate limit |
 | `ratelimit:space_create:<ip>` | String | 1 min | Space creation rate limit (10/min) |
@@ -214,20 +214,31 @@ Connection: `wss://api.pixhood.art` (max 10 concurrent connections per IP). Orig
 - `{ type: "pixel", data }` — pixel painted (viewport-scoped broadcast)
 - `{ type: "child", data }` — child pixel painted (viewport-scoped broadcast)
 - `{ type: "clearChildren", data: { parentId } }` — children erased (viewport-scoped broadcast)
-- `{ type: "deletePixel", data: { id } }` — pixel deleted by revert (viewport-scoped broadcast)
+- `{ type: "deletePixel", data: { id } }` — pixel deleted by revert or erase (viewport-scoped broadcast)
 - `{ type: "pong" }` — heartbeat response
 - `{ type: "session", sessionId }` — server-assigned session ID, sent when client has no valid session
-- `{ type: "paintAck", id }` — paint acknowledged (sent to painting client only)
-- `{ type: "paintError", id, reason, retryAfter? }` — paint rejected (`rate_limited`, `blocked`, `invalid_input`, `no_session`, `no_viewport`, `server_error`)
+- `{ type: "paintAck", id }` — paint/erase/undo acknowledged (sent to painting client only)
+- `{ type: "paintError", id, reason, retryAfter? }` — paint/erase/undo rejected (`rate_limited`, `blocked`, `invalid_input`, `no_session`, `no_viewport`, `server_error`)
 - `{ type: "blocked" }` — session auto-reverted (sent to painting client only)
+- `{ type: "undoResult", id, count }` — undo completed, confirms how many paint log entries were processed (sent to requesting client only)
 
 **Client → Server:**
 - `{ type: "ping" }` every 30s → server responds `{ type: "pong" }`
 - `{ type: "viewport", bounds: { n, s, e, w }, sessionId: "sess_...", zoom: 17 }` on connect, reconnect, and each viewport refresh (with fetch margin). Server uses sessionId for paint logging and suspicion detection. Server validates viewport span against reported zoom.
 - `{ type: "paintParent", id, tileKey, lat, lng, color }` — paint a parent pixel. `id` is a client-generated sequence number for ack correlation.
 - `{ type: "paintChild", id, parentId, tileKey, subX, subY, lat, lng, color }` — paint a child pixel.
+- `{ type: "paintErase", id, tileKey, lat, lng }` — erase (delete) a parent pixel and its children. No color field.
+- `{ type: "undoPaint", id, count }` — undo last `count` paints by this session (1–50, clamped server-side). Debounced on the client with 500ms window.
 
 Painting is optimistic: client renders immediately, sends WS message. Server responds with `paintAck` on success or `paintError` on failure. Client tracks pending paints with a 5-second timeout; on timeout or WS disconnect, shows a toast and triggers viewport refresh to correct visual state.
+
+### Erase
+
+Erasing is painting with the sentinel color `__erase__` (`CONFIG.ERASE_COLOR`). The client sends a `paintErase` WS message (no color field). The server deletes the pixel key, its sub-pixel hash, and removes it from the geo index. Previous state (color, children) is logged to the paint log for undoability. The server broadcasts `clearChildren` then `deletePixel` to clients in the viewport so they can remove rendered pixels.
+
+### Undo
+
+The undo tile in the palette is debounced: taps within 500ms are batched into a single `undoPaint` message with `count: N`. The server pops the last `N` entries from the session's paint log and restores each tile to its pre-paint state (parent color, children, or deleted). Results are broadcast via WS (`pixel` for restored tiles, `deletePixel` for tiles that were erased and should now disappear). The client receives an `undoResult` confirmation. Undo is guarded by `revertingSessions` in-memory set to prevent concurrent undo operations for the same session.
 
 ## Geolocation
 
@@ -252,11 +263,14 @@ Permission flow:
 - **Viewport-scoped broadcasts**: clients subscribe with bounds, server only forwards relevant updates. Avoids O(clients×paints) wasted messages.
 - **Single Fly.io machine**: in-memory WS state requires a single machine; cross-machine pub/sub not implemented.
 - **`maximumAge: 300000`** on geolocation: allows Chrome to return cached position instantly instead of timing out when the network location provider is slow.
+- **Erase as sentinel color**: Erasing uses `__erase__` sentinel color (`CONFIG.ERASE_COLOR`). Client sends `paintErase` WS message without color field. Server deletes pixel key, sub-pixel hash, and geo entry. Previous state logged to paint log for undo.
+- **Debounced undo**: Undo tile batches taps within 500ms window into a single `undoPaint` message with `count: N`. Server pops N entries from paint log and restores tiles atomically. Guarded by `revertingSessions` in-memory set to prevent concurrent undo.
+- **Erase broadcasts**: Server sends `clearChildren` before `deletePixel` so clients remove child renders first.
 - **No build step**: prototype stays simple, `node index.js` and open browser.
 
 ## Implementation notes
 
-**WebSocket protocol:** Message type strings (`WS_TYPE_PING`, `WS_TYPE_PONG`, `WS_TYPE_VIEWPORT`, `WS_TYPE_PIXEL`, `WS_TYPE_CHILD`, `WS_TYPE_CLEAR_CHILDREN`, `WS_TYPE_DELETE_PIXEL`, `WS_TYPE_PAINT_PARENT`, `WS_TYPE_PAINT_CHILD`, `WS_TYPE_PAINT_ACK`, `WS_TYPE_PAINT_ERROR`, `WS_TYPE_BLOCKED`, `WS_TYPE_SESSION`) are defined in `shared/ws-types.js` as the single source of truth. The server requires it via `./shared/ws-types` (copied by predeploy script). The frontend `config.js` wraps them in `CONFIG`. Frontend `build.js` validates sync at build time — fails if types drift.
+**WebSocket protocol:** Message type strings (`WS_TYPE_PING`, `WS_TYPE_PONG`, `WS_TYPE_VIEWPORT`, `WS_TYPE_PIXEL`, `WS_TYPE_CHILD`, `WS_TYPE_CLEAR_CHILDREN`, `WS_TYPE_DELETE_PIXEL`, `WS_TYPE_PAINT_PARENT`, `WS_TYPE_PAINT_CHILD`, `WS_TYPE_PAINT_ERASE`, `WS_TYPE_PAINT_ACK`, `WS_TYPE_PAINT_ERROR`, `WS_TYPE_BLOCKED`, `WS_TYPE_SESSION`, `WS_TYPE_UNDO_PAINT`, `WS_TYPE_UNDO_RESULT`) are defined in `shared/ws-types.js` as the single source of truth. The server requires it via `./shared/ws-types` (copied by predeploy script). The frontend `config.js` wraps them in `CONFIG`. Frontend `build.js` validates sync at build time — fails if types drift.
 
 **Pipeline optimizations:** `getSubpixelsMulti(parentIds)` fetches all sub-pixel hashes in a single Redis pipeline (replaces N+1 sequential `HGETALL` calls in viewport endpoint). `checkWriteRateLimitsBatch(ip, sessionId, ...)` pipelines IP rate limit INCR+PEXPIRE with session burst/sustained ZCOUNT checks in one round-trip.
 
@@ -264,7 +278,7 @@ Permission flow:
 
 ### Paint log (`paintlog:<sessionId>`)
 
-Every paint is logged with the previous pixel state for potential revert. The sorted set score is `Date.now()`, entries older than 24h are pruned on each write. The log serves dual purpose: sliding-window rate limiting (count entries in a time window) and audit trail for revert.
+Every paint is logged with the previous pixel state for potential revert. The sorted set score is `Date.now()`, entries older than 24h are pruned on each write. The log serves dual purpose: sliding-window rate limiting (count entries in a time window) and audit trail for revert. Entries include `type` (`parent`, `child`, or `erase`), `space` field (for cross-space undo), and previous state (`previousColor`/`previousChildren` for parent/erase, `previousChildColor`/`previousSubX`/`previousSubY` for child).
 
 ### Rate limits
 
@@ -292,7 +306,7 @@ Flagged sessions are stored in `flagged_sessions` Redis set and logged server-si
 
 ### Paint rejection
 
-Before any rate limit or suspicion check, paints are rejected early if:
+Before any rate limit or suspicion check, paints (including erase and undo) are rejected early if:
 - No session ID (`reason: "no_session"`)
 - No viewport subscribed yet (`reason: "no_viewport"`) — forces bots to send viewport, making `outside_viewport` and `implausible_viewport` checks meaningful
 - Session is blocked (`reason: "blocked"`)
@@ -313,7 +327,7 @@ Blocked sessions have their paints reverted and receive `{ type: "blocked" }` WS
 
 ### Revert
 
-`POST /admin/revert` restores all tiles painted by a session to their pre-session state. For each tile, the earliest log entry's `previousColor`/`previousChildren` (for parent paints) or `previousChildColor` (for child paints) determines the restoration target. Changes are broadcast via WS.
+`POST /admin/revert` restores all tiles painted by a session to their pre-session state. For each tile, the earliest log entry's `previousColor`/`previousChildren` (for parent/erase paints) or `previousChildColor` (for child paints) determines the restoration target. Changes are broadcast via WS.
 
 ### IP connection limit
 
@@ -327,7 +341,7 @@ All `/admin/*` endpoints and HTTP paint endpoints (`POST /pixels`, `POST /pixels
 
 ### Security
 
-- **Input validation**: `validatePaintParent()` and `validatePaintChild()` reject WS paint messages with invalid `tileKey` (must match `/^-?\d+(_-?\d+)+$/`), `color` (case-insensitive `/^#[0-9a-f]{6}$/`), `lat`/`lng` ranges, `subX`/`subY` (0–15). Rejected with `{type: "paintError", reason: "invalid_input"}`.
+- **Input validation**: `validatePaintParent()` and `validatePaintChild()` reject WS paint messages with invalid `tileKey` (must match `/^-?\d+(_-?\d+)+$/`), `color` (case-insensitive `/^#[0-9a-f]{6}$/`), `lat`/`lng` ranges, `subX`/`subY` (0–15). `handlePaintErase` validates `tileKey` and `lat`/`lng`. Rejected with `{type: "paintError", reason: "invalid_input"}`.
 - **Request body size limit**: 10KB max for HTTP requests. WS `maxPayload: 10KB`. Exceeds → 413 (HTTP) or connection close (WS).
 - **Timing-safe auth**: `timingSafeEqualStr()` using `crypto.timingSafeEqual` for admin token comparison, prevents timing attacks.
 - **XSS protection**: Admin panel uses `escapeHtml()` and `safeColor()` for all user-controlled innerHTML. No raw string interpolation.
@@ -349,7 +363,7 @@ No IP addresses shown anywhere in the admin UI.
 
 ## Out of scope (prototype)
 
-User accounts, pixel ownership, undo/erase, social features, mobile app.
+User accounts, pixel ownership, social features, mobile app.
 
 ## Environment variables
 

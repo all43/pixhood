@@ -75,6 +75,14 @@ const CONFIG = {
   WS_TYPE_PAINT_ERROR: 'paintError',
   WS_TYPE_BLOCKED: 'blocked',
 
+  WS_TYPE_PAINT_ERASE: 'paintErase',
+  WS_TYPE_UNDO_PAINT: 'undoPaint',
+  WS_TYPE_UNDO_RESULT: 'undoResult',
+
+  ERASE_COLOR: '__erase__',
+
+  UNDO_DEBOUNCE_MS: 500,
+
   // WebSocket reconnect (ms)
   WS_RETRY_INITIAL_MS: 1000,
   WS_RETRY_MAX_MS: 30000,

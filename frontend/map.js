@@ -300,6 +300,13 @@ function handleMapClick(e) {
   const { lat, lng } = e.latlng;
   const color = getSelectedColor();
 
+  if (color === CONFIG.ERASE_COLOR) {
+    const tile = snapToTile(lat, lng);
+    removePixel(tile.key);
+    writeErasePixel(lat, lng);
+    return;
+  }
+
   if (map.getZoom() >= CONFIG.SUB_GRID_ZOOM) {
     const tile = snapToTile(lat, lng);
     const sub = snapToSubTile(tile.key, lat, lng);

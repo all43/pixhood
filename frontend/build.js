@@ -92,11 +92,12 @@ fs.copyFileSync(
   path.join(DIST_DIR, 'favicon.svg')
 );
 console.log('  favicon.svg');
+fs.mkdirSync(path.join(DIST_DIR, 'icons'), { recursive: true });
 fs.copyFileSync(
   path.join(SRC_DIR, 'icons', 'logo.svg'),
-  path.join(DIST_DIR, 'logo.svg')
+  path.join(DIST_DIR, 'icons', 'logo.svg')
 );
-console.log('  logo.svg');
+console.log('  icons/logo.svg');
 
 // Copy privacy.html
 fs.copyFileSync(

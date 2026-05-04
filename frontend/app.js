@@ -2,6 +2,8 @@ let selectedColor = CONFIG.DEFAULT_COLOR;
 let slowHintTimer = null;
 let _refreshTimer = null;
 let _toastTimer = null;
+let _undoCount = 0;
+let _undoTimer = null;
 const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
 const PWA_STATE_KEY = 'pwa_install_state';
@@ -21,6 +23,22 @@ function selectColor(color) {
 function initColorPicker() {
   const palette = document.getElementById('palette');
   palette.textContent = '';
+
+  const undoTile = document.createElement('div');
+  undoTile.className = 'swatch swatch-tool swatch-undo';
+  undoTile.dataset.color = '__undo__';
+  undoTile.title = 'Undo';
+  undoTile.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h6a4 4 0 0 1 4 4"/><path d="M6 5L3 8l3 3"/></svg>';
+  undoTile.addEventListener('click', () => handleUndoTap());
+  palette.appendChild(undoTile);
+
+  const eraseTile = document.createElement('div');
+  eraseTile.className = 'swatch swatch-tool swatch-erase';
+  eraseTile.dataset.color = CONFIG.ERASE_COLOR;
+  eraseTile.title = 'Erase';
+  eraseTile.addEventListener('click', () => selectColor(CONFIG.ERASE_COLOR));
+  palette.appendChild(eraseTile);
+
   CONFIG.PALETTE.forEach(color => {
     const swatch = document.createElement('div');
     swatch.className = 'swatch';
@@ -31,10 +49,20 @@ function initColorPicker() {
     palette.appendChild(swatch);
   });
 
-  if (!CONFIG.PALETTE.includes(selectedColor)) {
+  if (!CONFIG.PALETTE.includes(selectedColor) && selectedColor !== CONFIG.ERASE_COLOR) {
     selectedColor = CONFIG.DEFAULT_COLOR;
   }
   selectColor(selectedColor);
+}
+
+function handleUndoTap() {
+  _undoCount++;
+  if (_undoTimer) clearTimeout(_undoTimer);
+  _undoTimer = setTimeout(() => {
+    sendUndoPaint(_undoCount);
+    _undoCount = 0;
+    _undoTimer = null;
+  }, CONFIG.UNDO_DEBOUNCE_MS);
 }
 
 function showToast(msg) {

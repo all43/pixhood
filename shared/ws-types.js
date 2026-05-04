@@ -11,5 +11,8 @@ module.exports = {
   WS_TYPE_PAINT_CHILD: 'paintChild',
   WS_TYPE_PAINT_ACK: 'paintAck',
   WS_TYPE_PAINT_ERROR: 'paintError',
-  WS_TYPE_BLOCKED: 'blocked'
+  WS_TYPE_BLOCKED: 'blocked',
+  WS_TYPE_PAINT_ERASE: 'paintErase',
+  WS_TYPE_UNDO_PAINT: 'undoPaint',
+  WS_TYPE_UNDO_RESULT: 'undoResult'
 };
