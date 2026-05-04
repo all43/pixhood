@@ -94,8 +94,7 @@ async function writeErasePixel(lat, lng) {
 }
 
 function sendUndoPaint(count) {
-  if (!_ws || _ws.readyState !== 1) return;
-  _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_UNDO_PAINT, id: nextPaintId(), count }));
+  _sendPaint({ type: CONFIG.WS_TYPE_UNDO_PAINT, id: nextPaintId(), count });
 }
 
 let _ws = null;

@@ -320,8 +320,8 @@ async function revertSession(sessionId) {
 
 async function undoLastPaints(sessionId, count) {
   const key = paintLogKey(sessionId);
-  const entries = await client.zRevRangeWithScores(key, 0, count - 1);
-  if (entries.length === 0) return { reverted: 0, tiles: [] };
+  const entries = (await client.zRangeWithScores(key, 0, -1)).reverse().slice(0, count);
+  if (entries.length === 0) return { reverted: 0, tiles: [], count: 0 };
 
   const paints = entries.map(e => ({ ...JSON.parse(e.value), timestamp: e.score }));
   for (const e of entries) {
