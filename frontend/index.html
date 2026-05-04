@@ -16,11 +16,8 @@
 <body>
   <div id="app">
     <div id="topbar">
+      <button id="menu-btn" type="button"><span></span></button>
       <div id="logo"><img src="icons/logo.svg" alt="" class="logo-icon" /><span class="logo-text">PIXHOOD</span></div>
-      <div id="space-indicator" class="hidden">
-        <span id="space-label"></span>
-        <button id="btn-copy-space" type="button" title="Copy link">&#x2398;</button>
-      </div>
       <div id="palette"></div>
     </div>
     <div id="map"></div>
@@ -62,6 +59,28 @@
     <button class="banner-close">&times;</button>
   </div>
   <div id="toast"></div>
+  <div id="menu-backdrop"></div>
+  <nav id="menu-panel">
+    <div id="menu-space-section" class="hidden">
+      <div class="menu-section-label">Space</div>
+      <div id="menu-space-slug"></div>
+      <button type="button" id="menu-btn-copy-space" class="menu-item">Copy Link</button>
+      <a href="/" id="menu-btn-leave-space" class="menu-item">Leave Space</a>
+      <hr class="menu-sep" />
+    </div>
+    <button type="button" id="menu-btn-create-space" class="menu-item">Create Space</button>
+    <button type="button" id="menu-btn-join-space" class="menu-item">Join Space</button>
+    <div id="menu-join-form" class="hidden">
+      <input type="text" id="menu-join-input" placeholder="Paste space link or code" autocomplete="off" spellcheck="false" />
+      <div class="menu-join-actions">
+        <button type="button" id="menu-join-go">Go</button>
+        <button type="button" id="menu-join-back">Cancel</button>
+      </div>
+    </div>
+    <hr class="menu-sep" />
+    <button type="button" id="menu-btn-install" class="menu-item hidden">Install App</button>
+    <a href="privacy.html" class="menu-item">Privacy Policy</a>
+  </nav>
 
   <!-- Leaflet (only external dependency) -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

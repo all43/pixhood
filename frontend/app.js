@@ -8,6 +8,11 @@ const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
 const PWA_STATE_KEY = 'pwa_install_state';
 const PWA_RETRY_MS = [3, 14, 60].map(days => days * 24 * 60 * 60 * 1000);
+const _isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+const _isMacSafari = /Macintosh/.test(navigator.userAgent) &&
+  /Safari\//.test(navigator.userAgent) &&
+  !/Chrome|Chromium|Edg\/|OPR\//.test(navigator.userAgent);
+let _pwaDeferredEvent = null;
 
 function getSelectedColor() {
   return selectedColor;
@@ -479,11 +484,11 @@ function parseSpaceSlug(val) {
 }
 
 function initSpaceIndicator() {
-  const indicator = document.getElementById('space-indicator');
-  const label = document.getElementById('space-label');
-  const btn = document.getElementById('btn-copy-space');
-  label.textContent = CONFIG.SPACE;
-  indicator.classList.remove('hidden');
+  const section = document.getElementById('menu-space-section');
+  const slug = document.getElementById('menu-space-slug');
+  const btn = document.getElementById('menu-btn-copy-space');
+  slug.textContent = CONFIG.SPACE;
+  section.classList.remove('hidden');
   btn.addEventListener('click', () => {
     const url = `${location.origin}/s/${CONFIG.SPACE}`;
     navigator.clipboard.writeText(url).then(() => showToast('Link copied')).catch(() => {
@@ -492,10 +497,131 @@ function initSpaceIndicator() {
   });
 }
 
+function initMenu() {
+  const menuBtn = document.getElementById('menu-btn');
+  const backdrop = document.getElementById('menu-backdrop');
+  const joinBtn = document.getElementById('menu-btn-join-space');
+  const createBtn = document.getElementById('menu-btn-create-space');
+  const joinForm = document.getElementById('menu-join-form');
+  const joinInput = document.getElementById('menu-join-input');
+  const joinGo = document.getElementById('menu-join-go');
+  const joinBack = document.getElementById('menu-join-back');
+  const installBtn = document.getElementById('menu-btn-install');
+
+  function openMenu() {
+    document.body.classList.add('menu-open');
+    joinForm.classList.add('hidden');
+    joinBtn.classList.remove('hidden');
+    createBtn.classList.remove('hidden');
+    updateInstallVisibility();
+  }
+
+  function closeMenu() {
+    document.body.classList.remove('menu-open');
+    joinForm.classList.add('hidden');
+    joinBtn.classList.remove('hidden');
+    createBtn.classList.remove('hidden');
+  }
+
+  menuBtn.addEventListener('click', () => {
+    if (document.body.classList.contains('menu-open')) closeMenu();
+    else openMenu();
+  });
+
+  backdrop.addEventListener('click', closeMenu);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && document.body.classList.contains('menu-open')) closeMenu();
+  });
+
+  createBtn.addEventListener('click', async () => {
+    closeMenu();
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
+      if (!res.ok) throw new Error(res.status);
+      const { slug } = await res.json();
+      location.href = `/s/${slug}`;
+    } catch {
+      showToast('Failed to create space');
+    }
+  });
+
+  joinBtn.addEventListener('click', () => {
+    joinBtn.classList.add('hidden');
+    createBtn.classList.add('hidden');
+    joinForm.classList.remove('hidden');
+    joinInput.value = '';
+    joinInput.focus();
+  });
+
+  joinGo.addEventListener('click', () => {
+    const val = joinInput.value.trim();
+    const slug = parseSpaceSlug(val);
+    if (slug) {
+      location.href = `/s/${slug}`;
+    } else {
+      showToast('Invalid space code or link');
+    }
+  });
+
+  joinInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') joinGo.click();
+  });
+
+  joinBack.addEventListener('click', () => {
+    joinForm.classList.add('hidden');
+    joinBtn.classList.remove('hidden');
+    createBtn.classList.remove('hidden');
+  });
+
+  installBtn.addEventListener('click', async () => {
+    if (_pwaDeferredEvent) {
+      const promptEvent = _pwaDeferredEvent;
+      _pwaDeferredEvent = null;
+      promptEvent.prompt();
+      let outcome = 'dismissed';
+      try {
+        const choice = await promptEvent.userChoice;
+        outcome = choice && choice.outcome ? choice.outcome : 'dismissed';
+      } catch {}
+      if (outcome === 'accepted') {
+        const s = readPWAState(); s.installed = true; writePWAState(s);
+        showToast('App installed!');
+        closeMenu();
+      } else {
+        const s = readPWAState();
+        s.dismissCount += 1;
+        const cooldown = PWA_RETRY_MS[Math.min(s.dismissCount - 1, PWA_RETRY_MS.length - 1)];
+        s.nextEligibleAt = Date.now() + cooldown;
+        writePWAState(s);
+      }
+    } else if (_isIOSDevice) {
+      showToast('Tap Share \u2191 then "Add to Home Screen"');
+      closeMenu();
+    } else if (_isMacSafari) {
+      showToast('In Safari: File \u203a Add to Dock');
+      closeMenu();
+    }
+  });
+
+  function updateInstallVisibility() {
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    if (isStandalone) { installBtn.classList.add('hidden'); return; }
+    const pwaState = readPWAState();
+    if (pwaState.installed) { installBtn.classList.add('hidden'); return; }
+    if (_pwaDeferredEvent || _isIOSDevice || _isMacSafari) {
+      installBtn.classList.remove('hidden');
+    } else {
+      installBtn.classList.add('hidden');
+    }
+  }
+}
+
 async function init() {
   initColorPicker();
   document.querySelector('.banner-close').addEventListener('click', hideLocationBanner);
   initSpaceUI();
+  initMenu();
 
   const geoPromise = (async () => {
     const vb = { n: CONFIG.DEFAULT_LAT + CONFIG.INIT_VIEWPORT_SPAN, s: CONFIG.DEFAULT_LAT - CONFIG.INIT_VIEWPORT_SPAN, e: CONFIG.DEFAULT_LNG + CONFIG.INIT_VIEWPORT_SPAN, w: CONFIG.DEFAULT_LNG - CONFIG.INIT_VIEWPORT_SPAN };
@@ -623,14 +749,6 @@ async function initPWAInstallPrompt(map) {
   let listenersActive = false;
   let promptWindowOpen = false;
   let promptShownThisSession = false;
-  let deferredInstallEvent = null;
-
-  // All iOS browsers share the same Share › Add to Home Screen flow (iOS 16.4+), so no need to filter to Safari-only.
-  const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-  // macOS Safari 17+ (Sonoma+) supports File › Add to Dock; Chromium on macOS uses beforeinstallprompt instead.
-  const isMacSafari = /Macintosh/.test(navigator.userAgent) &&
-    /Safari\//.test(navigator.userAgent) &&
-    !/Chrome|Chromium|Edg\/|OPR\//.test(navigator.userAgent);
 
   const MSG_INSTALL_NATIVE = 'Install Pixhood for faster launch and fullscreen mode.';
   const MSG_INSTALL_IOS    = 'On iOS: tap Share, then "Add to Home Screen"';
@@ -684,7 +802,7 @@ async function initPWAInstallPrompt(map) {
       return;
     }
 
-    if (!deferredInstallEvent && !isIOSDevice && !isMacSafari) {
+    if (!_pwaDeferredEvent && !_isIOSDevice && !_isMacSafari) {
       return;
     }
 
@@ -698,12 +816,12 @@ async function initPWAInstallPrompt(map) {
 
     let message, actionLabel, onAction;
 
-    if (deferredInstallEvent) {
+    if (_pwaDeferredEvent) {
       message = MSG_INSTALL_NATIVE;
       actionLabel = 'Install';
       onAction = async () => {
-        const promptEvent = deferredInstallEvent;
-        deferredInstallEvent = null;
+        const promptEvent = _pwaDeferredEvent;
+        _pwaDeferredEvent = null;
 
         pwaState.nativePromptAttempts += 1;
         writePWAState(pwaState);
@@ -725,7 +843,7 @@ async function initPWAInstallPrompt(map) {
 
         cleanupSession();
       };
-    } else if (isIOSDevice) {
+    } else if (_isIOSDevice) {
       message = MSG_INSTALL_IOS;
       actionLabel = 'How';
       onAction = async () => { showToast(MSG_HOW_IOS); cleanupSession(); };
@@ -752,7 +870,7 @@ async function initPWAInstallPrompt(map) {
 
   function onBeforeInstallPrompt(event) {
     event.preventDefault();
-    deferredInstallEvent = event;
+    _pwaDeferredEvent = event;
     if (promptWindowOpen) {
       showInstallCta();
     }

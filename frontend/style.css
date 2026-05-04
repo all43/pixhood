@@ -485,37 +485,6 @@ html, body {
   color: rgba(255,255,255,0.7);
 }
 
-/* ── Space indicator (topbar) ── */
-#space-indicator {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.7rem;
-  letter-spacing: 0.5px;
-  color: rgba(255,255,255,0.35);
-  white-space: nowrap;
-  user-select: none;
-}
-#space-indicator.hidden { display: none; }
-#space-label {
-  max-width: 7rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#btn-copy-space {
-  background: none;
-  border: none;
-  color: rgba(255,255,255,0.35);
-  font-size: 0.85rem;
-  cursor: pointer;
-  padding: 2px;
-  line-height: 1;
-  transition: color 0.2s ease;
-}
-#btn-copy-space:hover {
-  color: rgba(255,255,255,0.7);
-}
-
 /* ── Spinner screen ── */
 #loading-spinner-screen {
   display: flex;
@@ -666,6 +635,207 @@ html, body {
   border-color: rgba(255,255,255,0.5);
 }
 
+/* ── Hamburger menu ── */
+#menu-btn {
+  width: 24px;
+  height: 18px;
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+#menu-btn span,
+#menu-btn::before,
+#menu-btn::after {
+  display: block;
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: rgba(255,255,255,0.8);
+  border-radius: 1px;
+  transition: all 0.25s ease;
+}
+
+#menu-btn span {
+  top: 8px;
+}
+
+#menu-btn::before {
+  content: '';
+  top: 0;
+}
+
+#menu-btn::after {
+  content: '';
+  bottom: 0;
+}
+
+body.menu-open #menu-btn span {
+  opacity: 0;
+}
+
+body.menu-open #menu-btn::before {
+  top: 8px;
+  transform: rotate(45deg);
+}
+
+body.menu-open #menu-btn::after {
+  bottom: 8px;
+  transform: rotate(-45deg);
+}
+
+#menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 1999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+body.menu-open #menu-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+body.menu-open #topbar {
+  z-index: 2500;
+}
+
+#menu-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 280px;
+  max-width: 80vw;
+  background: #1a1a2e;
+  z-index: 2000;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 52px 0 env(safe-area-inset-bottom);
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+body.menu-open #menu-panel {
+  transform: translateX(0);
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  font: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0.3px;
+  padding: 12px 20px;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.menu-item:hover {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+}
+
+.menu-item.hidden {
+  display: none;
+}
+
+.menu-section-label {
+  padding: 16px 20px 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.25);
+}
+
+#menu-space-slug {
+  padding: 4px 20px 8px;
+  font-size: 0.8rem;
+  color: rgba(255,255,255,0.5);
+  letter-spacing: 0.5px;
+  word-break: break-all;
+}
+
+#menu-btn-leave-space {
+  color: rgba(255,255,255,0.35);
+}
+
+#menu-btn-leave-space:hover {
+  color: #e94560;
+}
+
+.menu-sep {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  margin: 4px 16px;
+}
+
+#menu-join-form {
+  padding: 4px 16px 12px;
+}
+
+#menu-space-section.hidden,
+#menu-join-form.hidden {
+  display: none;
+}
+
+#menu-join-input {
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  outline: none;
+  margin-bottom: 8px;
+}
+
+#menu-join-input:focus {
+  border-color: rgba(255,255,255,0.3);
+}
+
+.menu-join-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.menu-join-actions button {
+  flex: 1;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.7);
+  padding: 6px;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.menu-join-actions button:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+#menu-join-go {
+  background: rgba(233, 69, 96, 0.2) !important;
+  border-color: rgba(233, 69, 96, 0.4) !important;
+  color: #e94560 !important;
+}
+
 /* ── Safe area insets ── */
 .leaflet-bottom.leaflet-right {
   padding-right: env(safe-area-inset-right);
@@ -720,6 +890,14 @@ html, body {
   #palette .swatch:nth-child(13) { order: 7; }
   #palette .swatch:nth-child(12) { order: 8; }
   #palette .swatch:nth-child(11) { order: 9; }
+  #menu-btn {
+    padding: 10px 10px 10px 0;
+    margin: -10px 0;
+  }
+  #menu-panel {
+    padding-top: 58px;
+    width: 300px;
+  }
   #location-banner {
     font-size: 11px;
     padding: 8px 10px;
