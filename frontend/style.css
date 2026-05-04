@@ -31,6 +31,13 @@ html, body {
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
 
+#topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 #logo {
   display: flex;
   align-items: center;
@@ -700,14 +707,16 @@ body.menu-open #menu-btn::after {
   transition: opacity 0.25s ease;
 }
 
+body.menu-open #topbar {
+  z-index: 2500;
+}
+
 body.menu-open #menu-backdrop {
   opacity: 1;
   pointer-events: auto;
 }
 
-body.menu-open #topbar {
-  z-index: 2500;
-}
+
 
 #menu-panel {
   position: fixed;
@@ -722,7 +731,7 @@ body.menu-open #topbar {
   transition: transform 0.25s ease;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 52px 0 env(safe-area-inset-bottom);
+  padding: 58px 0 env(safe-area-inset-bottom);
   border-right: 1px solid rgba(255,255,255,0.06);
 }
 
@@ -897,7 +906,7 @@ body.menu-open #menu-panel {
     margin: -10px 0;
   }
   #menu-panel {
-    padding-top: 58px;
+    padding-top: 80px;
     width: 300px;
   }
   #location-banner {
