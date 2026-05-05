@@ -315,8 +315,8 @@ async function handlePaintParent (ws, msg) {
 
   await redis.deleteSubpixels(pixel.id, space)
   await redis.savePixel(pixel, space)
-  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space)
-  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } }, space)
+  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space, ws)
+  broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } }, space, ws)
   ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }))
 }
 
@@ -436,7 +436,7 @@ async function handlePaintChild (ws, msg) {
   updateSessionPaint(sessionId, childPixel.lat, childPixel.lng)
 
   const { children } = await redis.saveChildPixel(parentId, childKey, childPixel, space)
-  broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } }, space)
+  broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } }, space, ws)
   ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }))
 }
 
@@ -549,8 +549,8 @@ async function handlePaintErase (ws, msg) {
 
   updateSessionPaint(sessionId, lat, lng)
 
-  broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: tileKey } }, space)
-  broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tileKey } }, space)
+  broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: tileKey } }, space, ws)
+  broadcastToViewport(lat, lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tileKey } }, space, ws)
   ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ACK, id: msg.id }))
 }
 
@@ -1063,10 +1063,11 @@ function inBounds (lat, lng, b) {
   return lat >= b.s && lat <= b.n && lng >= b.w && lng <= b.e
 }
 
-function broadcastToViewport (lat, lng, data, space) {
+function broadcastToViewport (lat, lng, data, space, excludeClient) {
   const msg = JSON.stringify(data)
   for (const client of wss.clients) {
-    if (client.readyState === CONSTANTS.WS_OPEN &&
+    if (client !== excludeClient &&
+        client.readyState === CONSTANTS.WS_OPEN &&
         client.viewport &&
         inBounds(lat, lng, client.viewport) &&
         client.space === space) {
