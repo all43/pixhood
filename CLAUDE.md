@@ -48,9 +48,9 @@ pixhood/
 │   ├── style.css
 │   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE_M, Mercator projection, palette
 │   ├── grid.js        # Tile + sub-tile key computation
-│   ├── pixels.js      # Viewport fetch, paint/erase/undo WS, heartbeat
-│   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
-│   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
+│   ├── pixels.js      # Viewport fetch, paint/erase/undo WS messages, heartbeat
+│   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering, viewport bounds
+│   ├── app.js         # Bootstrap: geolocation, color picker, undo logic, toast system, viewport refresh
 │   ├── admin.js       # Admin panel (loaded dynamically on #admin): token auth, sessions, inspect, region erase
 │   ├── admin.css      # Admin panel styles (loaded dynamically on #admin)
 │   ├── favicon.svg
@@ -228,7 +228,7 @@ Connection: `wss://api.pixhood.art` (max 10 concurrent connections per IP). Orig
 - `{ type: "paintParent", id, tileKey, lat, lng, color }` — paint a parent pixel. `id` is a client-generated sequence number for ack correlation.
 - `{ type: "paintChild", id, parentId, tileKey, subX, subY, lat, lng, color }` — paint a child pixel.
 - `{ type: "paintErase", id, tileKey, lat, lng }` — erase (delete) a parent pixel and its children. No color field.
-- `{ type: "undoPaint", id, count }` — undo last `count` paints by this session (1–50, clamped server-side). Debounced on the client with 500ms window.
+- `{ type: "undoPaint", id, count }` — undo last `count` paints by this session (1–50, clamped server-side; client caps at 20 and further to consecutive viewport paints). Debounced on the client with 500ms window.
 
 Painting is optimistic: client renders immediately, sends WS message. Server responds with `paintAck` on success or `paintError` on failure. Client tracks pending paints with a 5-second timeout; on timeout or WS disconnect, shows a toast and triggers viewport refresh to correct visual state.
 
@@ -238,7 +238,17 @@ Erasing is painting with the sentinel color `__erase__` (`CONFIG.ERASE_COLOR`). 
 
 ### Undo
 
-The undo tile in the palette is debounced: taps within 500ms are batched into a single `undoPaint` message with `count: N`. The server pops the last `N` entries from the session's paint log and restores each tile to its pre-paint state (parent color, children, or deleted). Results are broadcast via WS (`pixel` for restored tiles, `deletePixel` for tiles that were erased and should now disappear). The client receives an `undoResult` confirmation. Undo is guarded by `revertingSessions` in-memory set to prevent concurrent undo operations for the same session.
+Client-side paint log (`_paintLog` array, max 20 entries, each with `lat`/`lng`) tracks recent paints on the client. On each paint, `recordPaint()` pushes to the log and updates the undo button state. On each viewport change (`moveend`/`zoomend`), `updateUndoButtonState()` recalculates how many paints are undoable.
+
+**Viewport-aware undo counting**: `getViewportUndoCount()` scans the paint log from the tail (most recent), counting consecutive paints within the current viewport bounds. It stops at the first paint outside the viewport. This count determines the undo button's enabled/disabled state and the maximum undo count sent to the server. If no viewport paints are in the tail, the undo button is disabled (`opacity: 0.35`, `pointer-events: none`). This prevents undoing paints the user can't see.
+
+**Button interactions**: The undo tile in the palette is debounced (500ms). On tap:
+1. If viewport undo count is 0, tap is ignored (no flash, no toast, no WS message).
+2. Button gets a background color pulse animation (`.undo-flash`, 250ms, auto-resets via `animationend`).
+3. A count toast appears at the bottom of the screen showing "Undo 1", "Undo 2"... incrementing with rapid taps. Uses the stackable toast system with `.toast-undo` style (bold, semi-transparent background, border).
+4. On debounce fire: capped count is recalculated against the latest viewport, screen flashes white (`.flash` on `#map-flash`, 200ms, 15% opacity), `undoPaint` WS message sent with `count: N`, paint log entries popped.
+
+**Server-side**: The server pops the last `N` entries from the session's paint log (`paintlog:<sessionId>`) and restores each tile to its pre-paint state. Results broadcast via WS. Undo guarded by `revertingSessions` in-memory set to prevent concurrent undo.
 
 ## Geolocation
 
@@ -264,7 +274,7 @@ Permission flow:
 - **Single Fly.io machine**: in-memory WS state requires a single machine; cross-machine pub/sub not implemented.
 - **`maximumAge: 300000`** on geolocation: allows Chrome to return cached position instantly instead of timing out when the network location provider is slow.
 - **Erase as sentinel color**: Erasing uses `__erase__` sentinel color (`CONFIG.ERASE_COLOR`). Client sends `paintErase` WS message without color field. Server deletes pixel key, sub-pixel hash, and geo entry. Previous state logged to paint log for undo.
-- **Debounced undo**: Undo tile batches taps within 500ms window into a single `undoPaint` message with `count: N`. Server pops N entries from paint log and restores tiles atomically. Guarded by `revertingSessions` in-memory set to prevent concurrent undo.
+- **Viewport-aware debounced undo**: Undo tile batches taps within 500ms window into a single `undoPaint` message with `count: N`. Client-side paint log (max 20 entries) tracks recent paints with lat/lng. Only consecutive paints from the tail within the current viewport count toward undo. Button disabled when 0 viewport paints. Button flashes on tap, count toast during debounce, screen flashes white on undo fire. Server pops N entries from paint log and restores tiles atomically. Guarded by `revertingSessions` in-memory set to prevent concurrent undo.
 - **Erase broadcasts**: Server sends `clearChildren` before `deletePixel` so clients remove child renders first.
 - **No build step**: prototype stays simple, `node index.js` and open browser.
 
@@ -273,6 +283,10 @@ Permission flow:
 **WebSocket protocol:** Message type strings (`WS_TYPE_PING`, `WS_TYPE_PONG`, `WS_TYPE_VIEWPORT`, `WS_TYPE_PIXEL`, `WS_TYPE_CHILD`, `WS_TYPE_CLEAR_CHILDREN`, `WS_TYPE_DELETE_PIXEL`, `WS_TYPE_PAINT_PARENT`, `WS_TYPE_PAINT_CHILD`, `WS_TYPE_PAINT_ERASE`, `WS_TYPE_PAINT_ACK`, `WS_TYPE_PAINT_ERROR`, `WS_TYPE_BLOCKED`, `WS_TYPE_SESSION`, `WS_TYPE_UNDO_PAINT`, `WS_TYPE_UNDO_RESULT`) are defined in `shared/ws-types.js` as the single source of truth. The server requires it via `./shared/ws-types` (copied by predeploy script). The frontend `config.js` wraps them in `CONFIG`. Frontend `build.js` validates sync at build time — fails if types drift.
 
 **Pipeline optimizations:** `getSubpixelsMulti(parentIds)` fetches all sub-pixel hashes in a single Redis pipeline (replaces N+1 sequential `HGETALL` calls in viewport endpoint). `checkWriteRateLimitsBatch(ip, sessionId, ...)` pipelines IP rate limit INCR+PEXPIRE with session burst/sustained ZCOUNT checks in one round-trip.
+
+**Toast system:** `#toast-container` is a flex column-reverse container that stacks multiple `.toast-item` elements independently. Each toast has its own dismiss timer. `showToast(msg)` deduplicates by text content — if a toast with the same message already exists, its timer is reset instead of creating a duplicate. `showActionToast()` creates a separate item with action/dismiss buttons and returns a reference for targeted dismissal (e.g., PWA install flow dismisses only its own toast via `_dismissToastItem()`). Undo count toasts use `.toast-undo` style (bold, semi-transparent background, border).
+
+**Client-side undo state:** The paint log (`_paintLog`, max 20 entries) tracks each paint with `lat`/`lng`. On each paint and on viewport changes (`moveend`/`zoomend`), `updateUndoButtonState()` toggles the `.disabled` class on the undo button based on `getViewportUndoCount()`. The paint log is in-memory only — page reloads clear it, so the undo button starts disabled after a refresh even if the server has paints to undo.
 
 ## Rate limiting and abuse prevention
 
