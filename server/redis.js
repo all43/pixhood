@@ -57,16 +57,23 @@ function protectedRegionsKey (space) {
   return space ? `space:${space}:protected_regions` : PROTECTED_REGIONS_KEY_GLOBAL
 }
 
-function enumerateTileKeys (n, s, e, w) {
-  const tileSize = 18.4
-  const R = 20037508.34
-  const lngToX = lng => lng * R / 180
-  const latToY = lat => Math.log(Math.tan((90 + lat) * Math.PI / 360)) * R / Math.PI
+const TILE_SIZE = 18.4
+const R = 20037508.34
+const lngToX = lng => lng * R / 180
+const latToY = lat => Math.log(Math.tan((90 + lat) * Math.PI / 360)) * R / Math.PI
+const xToLng = x => x * 180 / R
+const yToLat = y => Math.atan(Math.exp(y * Math.PI / R)) * 360 / Math.PI - 90
 
-  const minTx = Math.floor(lngToX(w) / tileSize)
-  const maxTx = Math.floor(lngToX(e) / tileSize)
-  const minTy = Math.floor(latToY(s) / tileSize)
-  const maxTy = Math.floor(latToY(n) / tileSize)
+function parseTileKey (key) {
+  const parts = key.split('_')
+  return { tx: Number(parts[0]), ty: Number(parts[1]) }
+}
+
+function enumerateTileKeys (n, s, e, w) {
+  const minTx = Math.floor(lngToX(w) / TILE_SIZE)
+  const maxTx = Math.floor(lngToX(e) / TILE_SIZE)
+  const minTy = Math.floor(latToY(s) / TILE_SIZE)
+  const maxTy = Math.floor(latToY(n) / TILE_SIZE)
 
   const keys = []
   for (let tx = minTx; tx <= maxTx; tx++) {
@@ -75,6 +82,129 @@ function enumerateTileKeys (n, s, e, w) {
     }
   }
   return keys
+}
+
+function tileOutline (tileKey) {
+  const { tx, ty } = parseTileKey(tileKey)
+  return [
+    [yToLat(ty * TILE_SIZE), xToLng(tx * TILE_SIZE)],
+    [yToLat((ty + 1) * TILE_SIZE), xToLng(tx * TILE_SIZE)],
+    [yToLat((ty + 1) * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)],
+    [yToLat(ty * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)]
+  ]
+}
+
+function findConnectedComponents (tileKeySet) {
+  const visited = new Set()
+  const components = []
+
+  for (const tk of tileKeySet) {
+    if (visited.has(tk)) continue
+
+    const component = new Set()
+    const queue = [tk]
+    while (queue.length > 0) {
+      const current = queue.shift()
+      if (visited.has(current)) continue
+      visited.add(current)
+      component.add(current)
+
+      const { tx, ty } = parseTileKey(current)
+      const neighbors = [`${tx - 1}_${ty}`, `${tx + 1}_${ty}`, `${tx}_${ty - 1}`, `${tx}_${ty + 1}`]
+      for (const n of neighbors) {
+        if (tileKeySet.has(n) && !visited.has(n)) queue.push(n)
+      }
+    }
+
+    components.push(component)
+  }
+
+  return components
+}
+
+function traceOutline (component) {
+  const edges = new Map()
+  const DIRS = [
+    { dx: 0, dy: 1, edgeKey: (tx, ty) => `b${tx}_${ty}`, p1: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng(tx * TILE_SIZE)], p2: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)] },
+    { dx: 0, dy: -1, edgeKey: (tx, ty) => `t${tx}_${ty}`, p1: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)], p2: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng(tx * TILE_SIZE)] },
+    { dx: 1, dy: 0, edgeKey: (tx, ty) => `r${tx}_${ty}`, p1: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)], p2: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)] },
+    { dx: -1, dy: 0, edgeKey: (tx, ty) => `l${tx}_${ty}`, p1: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng(tx * TILE_SIZE)], p2: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng(tx * TILE_SIZE)] }
+  ]
+
+  const pointKey = (p) => `${p[0].toFixed(10)},${p[1].toFixed(10)}`
+  const adj = new Map()
+
+  for (const tk of component) {
+    const { tx, ty } = parseTileKey(tk)
+    for (const d of DIRS) {
+      const nk = `${tx + d.dx}_${ty + d.dy}`
+      if (component.has(nk)) continue
+      const ek = d.edgeKey(tx, ty)
+      if (edges.has(ek)) continue
+      edges.set(ek, true)
+      const a = d.p1(tx, ty)
+      const b = d.p2(tx, ty)
+      const ak = pointKey(a)
+      const bk = pointKey(b)
+      if (!adj.has(ak)) adj.set(ak, [])
+      adj.get(ak).push(b)
+      if (!adj.has(bk)) adj.set(bk, [])
+      adj.get(bk).push(a)
+    }
+  }
+
+  if (edges.size === 0) return []
+
+  const outline = []
+  let current = null
+  for (const [k, neighbors] of adj) {
+    current = neighbors[0]
+    const [lat, lng] = k.split(',').map(Number)
+    outline.push([lat, lng])
+    break
+  }
+
+  const visitedEdges = new Set()
+  let safety = edges.size + 2
+  while (safety-- > 0) {
+    const ck = pointKey(current)
+    const neighbors = adj.get(ck)
+    if (!neighbors) break
+    let found = false
+    for (const n of neighbors) {
+      const ek = ck + '>' + pointKey(n)
+      if (!visitedEdges.has(ek)) {
+        visitedEdges.add(ek)
+        if (outline.length > 2 && pointKey(n) === pointKey(outline[0])) {
+          outline.push(outline[0])
+          return outline
+        }
+        outline.push(n)
+        current = n
+        found = true
+        break
+      }
+    }
+    if (!found) break
+  }
+
+  return outline
+}
+
+function computeRegionOutlines (tileKeySet) {
+  const components = findConnectedComponents(tileKeySet)
+  const regions = []
+  for (const component of components) {
+    const outline = traceOutline(component)
+    if (outline.length >= 4) {
+      regions.push({
+        id: 'reg_' + crypto.randomBytes(4).toString('hex'),
+        outline,
+        tileKeys: [...component]
+      })
+    }
+  }
+  return regions
 }
 
 async function savePixel (pixel, space) {
@@ -617,20 +747,64 @@ async function deletePixelsInRegion (n, s, e, w, space) {
 }
 
 async function protectRegion (n, s, e, w, space) {
-  const regionId = 'reg_' + crypto.randomBytes(4).toString('hex')
-  const region = { id: regionId, n, s, e, w }
-
-  await client.lPush(protectedRegionsKey(space), JSON.stringify(region))
-
-  const tileKeys = enumerateTileKeys(n, s, e, w)
+  const rKey = protectedRegionsKey(space)
   const pKey = protectedTilesKey(space)
 
-  if (tileKeys.length > 0) {
-    const batchSize = 500
-    for (let i = 0; i < tileKeys.length; i += batchSize) {
-      const batch = tileKeys.slice(i, i + batchSize)
-      await client.sAdd(pKey, batch)
+  const newTileKeys = enumerateTileKeys(n, s, e, w)
+  const newTileSet = new Set(newTileKeys)
+
+  const rawRegions = await client.lRange(rKey, 0, -1)
+  const existingRegions = rawRegions.map(r => safeParse(r)).filter(Boolean)
+
+  const existingTileSet = new Set(await client.sMembers(pKey))
+  let hasOverlap = false
+  for (const tk of newTileSet) {
+    if (existingTileSet.has(tk)) { hasOverlap = true; break }
+  }
+  for (const tk of existingTileSet) {
+    if (!hasOverlap) break
+    const { tx, ty } = parseTileKey(tk)
+    const neighbors = [`${tx - 1}_${ty}`, `${tx + 1}_${ty}`, `${tx}_${ty - 1}`, `${tx}_${ty + 1}`]
+    for (const nk of neighbors) {
+      if (newTileSet.has(nk)) { hasOverlap = true; break }
     }
+  }
+
+  let mergedRegionId
+
+  if (hasOverlap && existingRegions.length > 0) {
+    const mergedSet = new Set([...existingTileSet, ...newTileSet])
+    const outlines = computeRegionOutlines(mergedSet)
+
+    await client.del(rKey)
+    for (const reg of outlines) {
+      await client.lPush(rKey, JSON.stringify(reg))
+    }
+
+    await client.del(pKey)
+    for (const tk of mergedSet) {
+      await client.sAdd(pKey, tk)
+    }
+
+    mergedRegionId = outlines.length > 0 ? outlines[0].id : 'reg_' + crypto.randomBytes(4).toString('hex')
+  } else {
+    const outlines = computeRegionOutlines(newTileSet)
+    let targetRegion = outlines.length > 0 ? outlines[0] : null
+
+    if (!targetRegion) {
+      targetRegion = { id: 'reg_' + crypto.randomBytes(4).toString('hex'), outline: [], tileKeys: [] }
+    }
+
+    await client.lPush(rKey, JSON.stringify(targetRegion))
+
+    if (newTileKeys.length > 0) {
+      const batchSize = 500
+      for (let i = 0; i < newTileKeys.length; i += batchSize) {
+        await client.sAdd(pKey, newTileKeys.slice(i, i + batchSize))
+      }
+    }
+
+    mergedRegionId = targetRegion.id
   }
 
   let protectedCount = 0
@@ -658,7 +832,7 @@ async function protectRegion (n, s, e, w, space) {
     protectedCount++
   }
 
-  return { regionId, tilesCount: tileKeys.length, protected: protectedCount }
+  return { regionId: mergedRegionId, tilesCount: newTileKeys.length, protected: protectedCount }
 }
 
 async function unprotectRegion (regionId, space) {
@@ -669,19 +843,30 @@ async function unprotectRegion (regionId, space) {
 
   await client.lRem(rKey, 0, JSON.stringify(targetRegion))
 
-  await rebuildProtectedTilesSet(space)
+  const remainingRegions = regions.filter(r => r.id !== regionId)
+
+  const pKey = protectedTilesKey(space)
+  await client.del(pKey)
+  for (const reg of remainingRegions) {
+    const tks = reg.tileKeys || enumerateTileKeys(reg.n, reg.s, reg.e, reg.w)
+    if (tks.length > 0) {
+      const batchSize = 500
+      for (let i = 0; i < tks.length; i += batchSize) {
+        await client.sAdd(pKey, tks.slice(i, i + batchSize))
+      }
+    }
+  }
 
   if (targetRegion) {
-    const tileKeys = enumerateTileKeys(targetRegion.n, targetRegion.s, targetRegion.e, targetRegion.w)
-    const remainingRegions = regions.filter(r => r.id !== regionId)
     const stillProtected = new Set()
     for (const reg of remainingRegions) {
-      for (const tk of enumerateTileKeys(reg.n, reg.s, reg.e, reg.w)) {
+      for (const tk of (reg.tileKeys || [])) {
         stillProtected.add(tk)
       }
     }
 
-    for (const tk of tileKeys) {
+    const removedTileKeys = targetRegion.tileKeys || enumerateTileKeys(targetRegion.n, targetRegion.s, targetRegion.e, targetRegion.w)
+    for (const tk of removedTileKeys) {
       if (stillProtected.has(tk)) continue
       const raw = await client.get(pixelKey(tk, space))
       if (!raw) continue
@@ -711,11 +896,11 @@ async function rebuildProtectedTilesSet (space) {
   const regions = rawRegions.map(r => safeParse(r)).filter(Boolean)
 
   for (const region of regions) {
-    const tileKeys = enumerateTileKeys(region.n, region.s, region.e, region.w)
-    if (tileKeys.length > 0) {
+    const tks = region.tileKeys || enumerateTileKeys(region.n, region.s, region.e, region.w)
+    if (tks.length > 0) {
       const batchSize = 500
-      for (let i = 0; i < tileKeys.length; i += batchSize) {
-        await client.sAdd(pKey, tileKeys.slice(i, i + batchSize))
+      for (let i = 0; i < tks.length; i += batchSize) {
+        await client.sAdd(pKey, tks.slice(i, i + batchSize))
       }
     }
   }

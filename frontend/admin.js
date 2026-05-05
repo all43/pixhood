@@ -396,12 +396,27 @@ async function loadRegions() {
   }
 
   list.innerHTML = regions.map(r => {
-    const widthM = ((r.e - r.w) * 111 * Math.cos((r.n + r.s) / 2 * Math.PI / 180)).toFixed(0);
-    const heightM = ((r.n - r.s) * 111).toFixed(0);
+    let areaText = '';
+    if (r.outline && r.outline.length >= 3) {
+      let area = 0;
+      for (let i = 0; i < r.outline.length - 1; i++) {
+        area += r.outline[i][1] * r.outline[i + 1][0];
+        area -= r.outline[i + 1][1] * r.outline[i][0];
+      }
+      area = Math.abs(area) / 2;
+      const areaM2 = area * 111320 * 111320 * Math.cos(((r.outline[0][0] + r.outline[Math.floor(r.outline.length / 2)][0]) / 2) * Math.PI / 180);
+      areaText = areaM2 > 10000 ? `${(areaM2 / 10000).toFixed(1)}ha` : `${Math.round(areaM2)}m²`;
+    } else if (r.n != null) {
+      const widthM = ((r.e - r.w) * 111320 * Math.cos((r.n + r.s) / 2 * Math.PI / 180));
+      const heightM = ((r.n - r.s) * 111320);
+      areaText = `${Math.round(widthM)}m × ${Math.round(heightM)}m`;
+    }
+    const centerLat = r.outline ? r.outline.reduce((s, p) => s + p[0], 0) / r.outline.length : (r.n + r.s) / 2;
+    const centerLng = r.outline ? r.outline.reduce((s, p) => s + p[1], 0) / r.outline.length : (r.e + r.w) / 2;
     return `<div class="admin-session-row">
       <span class="admin-session-id">${escapeHtml(r.id)}</span>
-      <span class="admin-session-meta">${widthM}m × ${heightM}m</span>
-      <button class="admin-btn-sm admin-locate-btn" data-lat="${(r.n + r.s) / 2}" data-lng="${(r.e + r.w) / 2}" title="Locate">⦿</button>
+      <span class="admin-session-meta">${areaText}</span>
+      <button class="admin-btn-sm admin-locate-btn" data-lat="${centerLat}" data-lng="${centerLng}" title="Locate">⦿</button>
       <button class="admin-btn-sm admin-btn-danger" data-unprotect-region="${escapeHtml(r.id)}">Unprotect</button>
     </div>`;
   }).join('');

@@ -17,7 +17,14 @@ async function fetchProtectedRegions() {
     if (CONFIG.SPACE) params.set('space', CONFIG.SPACE);
     const res = await fetch(`${CONFIG.API_URL}/protected-regions?${params}`);
     if (res.ok) {
-      protectedRegionsCache = await res.json();
+      const data = await res.json();
+      protectedRegionsCache = data.map(r => {
+        if (r.outline) return r;
+        if (r.n != null) {
+          return { ...r, outline: [[r.s, r.w], [r.n, r.w], [r.n, r.e], [r.s, r.e], [r.s, r.w]] };
+        }
+        return r;
+      });
     }
   } catch {}
   return protectedRegionsCache;
@@ -42,25 +49,6 @@ function computeParentDisplay(children) {
   return { color, opacity };
 }
 
-function mergeRectangles(rects) {
-  if (rects.length === 0) return [];
-  const sorted = [...rects].sort((a, b) => a.s - b.s || a.w - b.w);
-  const merged = [sorted[0]];
-  for (let i = 1; i < sorted.length; i++) {
-    const last = merged[merged.length - 1];
-    const cur = sorted[i];
-    if (cur.s <= last.n && cur.w <= last.e && cur.e >= last.w) {
-      last.n = Math.max(last.n, cur.n);
-      last.s = Math.min(last.s, cur.s);
-      last.w = Math.min(last.w, cur.w);
-      last.e = Math.max(last.e, cur.e);
-    } else {
-      merged.push({ ...cur });
-    }
-  }
-  return merged;
-}
-
 function renderProtectedBorders() {
   for (const line of protectedRegionBorders) {
     if (map.hasLayer(line)) map.removeLayer(line);
@@ -69,16 +57,9 @@ function renderProtectedBorders() {
 
   if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
 
-  const merged = mergeRectangles(protectedRegionsCache);
-  for (const region of merged) {
-    const outline = [
-      [region.s, region.w],
-      [region.n, region.w],
-      [region.n, region.e],
-      [region.s, region.e],
-      [region.s, region.w]
-    ];
-    const line = L.polyline(outline, {
+  for (const region of protectedRegionsCache) {
+    if (!region.outline || region.outline.length < 3) continue;
+    const line = L.polyline(region.outline, {
       color: CONFIG.PROTECTED_BORDER_COLOR,
       weight: CONFIG.PROTECTED_BORDER_WEIGHT,
       dashArray: '6 4',
