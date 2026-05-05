@@ -304,6 +304,7 @@ function handleMapClick(e) {
     const tile = snapToTile(lat, lng);
     removePixel(tile.key);
     writeErasePixel(lat, lng);
+    recordPaint(lat, lng);
     return;
   }
 
@@ -324,11 +325,13 @@ function handleMapClick(e) {
     updateParentDisplay(tile.key);
 
     writeChildPixel(tile.key, lat, lng, color);
+    recordPaint(lat, lng);
   } else {
     const tile = snapToTile(lat, lng);
     renderPixel({ id: tile.key, lat: tile.lat, lng: tile.lng, color, hasChildren: false });
 
     writePixel(lat, lng, color);
+    recordPaint(lat, lng);
   }
 }
 

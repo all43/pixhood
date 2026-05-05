@@ -4,6 +4,8 @@ let _refreshTimer = null;
 let _undoCount = 0;
 let _undoTimer = null;
 let _undoToastItem = null;
+const _paintLog = [];
+const MAX_PAINT_LOG = 20;
 const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
 const PWA_STATE_KEY = 'pwa_install_state';
@@ -30,7 +32,7 @@ function initColorPicker() {
   palette.textContent = '';
 
   const undoTile = document.createElement('div');
-  undoTile.className = 'swatch swatch-tool swatch-undo';
+  undoTile.className = 'swatch swatch-tool swatch-undo disabled';
   undoTile.dataset.color = '__undo__';
   undoTile.title = 'Undo';
   undoTile.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h6a4 4 0 0 1 4 4"/><path d="M6 5L3 8l3 3"/></svg>';
@@ -60,7 +62,37 @@ function initColorPicker() {
   selectColor(selectedColor);
 }
 
+function recordPaint(lat, lng) {
+  _paintLog.push({ lat, lng });
+  if (_paintLog.length > MAX_PAINT_LOG) _paintLog.shift();
+  updateUndoButtonState();
+}
+
+function getViewportUndoCount() {
+  const vb = typeof getViewportBounds === 'function' ? getViewportBounds() : null;
+  if (!vb || _paintLog.length === 0) return 0;
+  let count = 0;
+  for (let i = _paintLog.length - 1; i >= 0; i--) {
+    const p = _paintLog[i];
+    if (p.lat >= vb.s && p.lat <= vb.n && p.lng >= vb.w && p.lng <= vb.e) {
+      count++;
+    } else {
+      break;
+    }
+  }
+  return count;
+}
+
+function updateUndoButtonState() {
+  const btn = document.querySelector('.swatch-undo');
+  if (!btn) return;
+  btn.classList.toggle('disabled', getViewportUndoCount() === 0);
+}
+
 function handleUndoTap() {
+  const available = getViewportUndoCount();
+  if (available === 0) return;
+
   _undoCount++;
   const undoBtn = document.querySelector('.swatch-undo');
   if (undoBtn) {
@@ -73,15 +105,20 @@ function handleUndoTap() {
     _undoToastItem = _createToastItem();
     _undoToastItem.classList.add('toast-undo');
   }
-  _undoToastItem.textContent = `Undo ${_undoCount}`;
+  _undoToastItem.textContent = `Undo ${Math.min(_undoCount, available)}`;
   if (_undoTimer) clearTimeout(_undoTimer);
   _undoTimer = setTimeout(() => {
-    flashMap();
-    sendUndoPaint(_undoCount);
+    const count = Math.min(_undoCount, getViewportUndoCount());
+    if (count > 0) {
+      flashMap();
+      sendUndoPaint(count);
+      _paintLog.splice(-count);
+    }
     _dismissToastItem(_undoToastItem);
     _undoToastItem = null;
     _undoCount = 0;
     _undoTimer = null;
+    updateUndoButtonState();
   }, CONFIG.UNDO_DEBOUNCE_MS);
 }
 
@@ -472,9 +509,11 @@ async function proceedToMap(geoResult, pixelsPromise) {
 
   map.on('moveend', () => {
     scheduleViewportRefresh();
+    updateUndoButtonState();
   });
   map.on('zoomend', () => {
     scheduleViewportRefresh();
+    updateUndoButtonState();
   });
 
   // PWA install CTA: delayed, then shown after brief inactivity
