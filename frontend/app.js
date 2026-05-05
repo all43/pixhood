@@ -8,6 +8,7 @@ const _paintLog = [];
 const MAX_PAINT_LOG = 20;
 const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
+const SPACE_KEY_PREFIX = 'space_key:';
 const PWA_STATE_KEY = 'pwa_install_state';
 const PWA_RETRY_MS = [3, 14, 60].map(days => days * 24 * 60 * 60 * 1000);
 const _isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
@@ -15,6 +16,98 @@ const _isMacSafari = /Macintosh/.test(navigator.userAgent) &&
   /Safari\//.test(navigator.userAgent) &&
   !/Chrome|Chromium|Edg\/|OPR\//.test(navigator.userAgent);
 let _pwaDeferredEvent = null;
+
+function getStoredSpaceKey(slug) {
+  return localStorage.getItem(SPACE_KEY_PREFIX + slug);
+}
+
+function storeSpaceKey(slug, key) {
+  localStorage.setItem(SPACE_KEY_PREFIX + slug, key);
+}
+
+function showSpaceKeyModal(slug, key) {
+  const existing = document.getElementById('space-key-modal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'space-key-modal';
+  const spaceLink = `${location.origin}/s/${slug}`;
+  overlay.innerHTML = `
+    <div class="space-key-box">
+      <h2>Space Created!</h2>
+      <div class="space-key-field">
+        <label>Link</label>
+        <input type="text" readonly value="${spaceLink}" id="space-key-link" />
+        <button class="space-key-copy-btn" data-copy="link">Copy</button>
+      </div>
+      <div class="space-key-field">
+        <label>Key</label>
+        <input type="text" readonly value="${key}" id="space-key-value" />
+        <button class="space-key-copy-btn" data-copy="key">Copy</button>
+      </div>
+      <div class="space-key-warning">
+        Save this key — it <strong>cannot be recovered</strong> if lost. You'll need it to manage your space (protect, erase, inspect).
+      </div>
+      <div class="space-key-actions">
+        <button id="space-key-download">Download Key File</button>
+      </div>
+      <label class="space-key-checkbox">
+        <input type="checkbox" id="space-key-confirm" />
+        I have saved my admin key (or I don't need it)
+      </label>
+      <button class="space-key-continue" id="space-key-go" disabled>Continue to Space</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const confirmBox = document.getElementById('space-key-confirm');
+  const goBtn = document.getElementById('space-key-go');
+
+  confirmBox.addEventListener('change', () => {
+    goBtn.disabled = !confirmBox.checked;
+  });
+
+  overlay.querySelectorAll('.space-key-copy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.copy === 'key'
+        ? document.getElementById('space-key-value')
+        : document.getElementById('space-key-link');
+      navigator.clipboard.writeText(target.value).then(() => {
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+      }).catch(() => {
+        target.select();
+        document.execCommand('copy');
+        btn.textContent = 'Copied!';
+        btn.classList.add('copied');
+      });
+    });
+  });
+
+  document.getElementById('space-key-download').addEventListener('click', () => {
+    const content = [
+      'Pixhood Space Admin Key',
+      '=======================',
+      `Space: ${slug}`,
+      `Link:   ${spaceLink}`,
+      `Key:    ${key}`,
+      '',
+      'Keep this file safe. This key cannot be recovered if lost.'
+    ].join('\n');
+    const blob = new Blob([content], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `pixhood-space-${slug}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  goBtn.addEventListener('click', () => {
+    if (goBtn.disabled) return;
+    storeSpaceKey(slug, key);
+    location.href = `/s/${slug}`;
+  });
+}
 
 function getSelectedColor() {
   return selectedColor;
@@ -550,8 +643,12 @@ function initSpaceUI() {
     try {
       const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
       if (!res.ok) throw new Error(res.status);
-      const { slug } = await res.json();
-      location.href = `/s/${slug}`;
+      const { slug, key } = await res.json();
+      if (key) {
+        showSpaceKeyModal(slug, key);
+      } else {
+        location.href = `/s/${slug}`;
+      }
     } catch {
       showWelcomeError('Could not create space — check your internet connection.');
     }
@@ -597,6 +694,7 @@ function initSpaceIndicator() {
   const section = document.getElementById('menu-space-section');
   const slug = document.getElementById('menu-space-slug');
   const btn = document.getElementById('menu-btn-copy-space');
+  const manageBtn = document.getElementById('menu-btn-manage-space');
   slug.textContent = CONFIG.SPACE;
   section.classList.remove('hidden');
   btn.addEventListener('click', () => {
@@ -605,6 +703,17 @@ function initSpaceIndicator() {
       showToast(url);
     });
   });
+  if (getStoredSpaceKey(CONFIG.SPACE) && manageBtn) {
+    manageBtn.classList.remove('hidden');
+    manageBtn.addEventListener('click', () => {
+      document.body.classList.remove('menu-open');
+      if (typeof window.openSpaceAdminPanel === 'function') {
+        window.openSpaceAdminPanel();
+      } else {
+        loadAdmin();
+      }
+    });
+  }
 }
 
 function initMenu() {
@@ -663,8 +772,12 @@ function initMenu() {
     try {
       const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
       if (!res.ok) throw new Error(res.status);
-      const { slug } = await res.json();
-      location.href = `/s/${slug}`;
+      const { slug, key } = await res.json();
+      if (key) {
+        showSpaceKeyModal(slug, key);
+      } else {
+        location.href = `/s/${slug}`;
+      }
     } catch {
       showToast('Could not create space — check your internet connection.');
     }

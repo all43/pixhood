@@ -652,6 +652,10 @@ async function unblockSession (sessionId) {
 
 const ADMIN_ATTEMPTS_MAX = 5
 const ADMIN_LOCKOUT_MS = 900000
+const ADMIN_REQUEST_MAX = 60
+const ADMIN_REQUEST_WINDOW_MS = 60000
+const ADMIN_VERIFY_MAX = 30
+const ADMIN_VERIFY_WINDOW_MS = 60000
 
 function adminAttemptKey (ip) { return `admin_attempts:${ip}` }
 
@@ -985,5 +989,9 @@ module.exports = {
   subpixelsKey,
   geoKey,
   protectedTilesKey,
-  protectedRegionsKey
+  protectedRegionsKey,
+  ADMIN_REQUEST_MAX,
+  ADMIN_REQUEST_WINDOW_MS,
+  ADMIN_VERIFY_MAX,
+  ADMIN_VERIFY_WINDOW_MS
 }

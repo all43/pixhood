@@ -48,6 +48,7 @@ function parseSpaceParam (url) {
 const PORT = process.env.PORT || 3000
 const CORS_ORIGIN = process.env.CORS_ORIGIN || `http://localhost:${PORT}`
 const ADMIN_API_KEY = process.env.ADMIN_API_KEY || null
+const SPACE_KEY_SECRET = process.env.SPACE_KEY_SECRET || null
 
 const sessionStates = new Map()
 const sessionRefCounts = new Map()
@@ -107,13 +108,42 @@ function timingSafeEqualStr (a, b) {
 }
 
 async function checkAdminAuth (req) {
-  if (!ADMIN_API_KEY) return { ok: false }
+  if (!ADMIN_API_KEY && !SPACE_KEY_SECRET) return { ok: false }
   const ip = getClientIP(req)
+  const rateLimit = await redis.checkIPRateLimit(ip, 'admin', redis.ADMIN_REQUEST_MAX, redis.ADMIN_REQUEST_WINDOW_MS)
+  if (!rateLimit.allowed) return { ok: false, locked: true, retryAfter: rateLimit.retryAfter }
   const lockout = await redis.checkAdminRateLimit(ip)
   if (lockout.locked) return { ok: false, locked: true, retryAfter: lockout.retryAfter }
   const auth = req.headers.authorization || ''
-  if (timingSafeEqualStr(auth, `Bearer ${ADMIN_API_KEY}`)) return { ok: true, ip }
+  if (ADMIN_API_KEY && timingSafeEqualStr(auth, `Bearer ${ADMIN_API_KEY}`)) return { ok: true, ip, source: 'global' }
   await redis.incrementAdminFailure(ip)
+  return { ok: false }
+}
+
+function deriveSpaceKey (slug) {
+  return 'sk_' + crypto.createHmac('sha256', SPACE_KEY_SECRET).update(slug).digest('base64url')
+}
+
+function checkSpaceAdminAuth (req, slug) {
+  if (!SPACE_KEY_SECRET || !slug) return { ok: false }
+  const auth = req.headers.authorization || ''
+  const expected = `Bearer ${deriveSpaceKey(slug)}`
+  if (timingSafeEqualStr(auth, expected)) return { ok: true, source: 'space' }
+  return { ok: false }
+}
+
+async function checkAnyAdminAuth (req, space) {
+  const adminAuth = await checkAdminAuth(req)
+  if (adminAuth.ok) return adminAuth
+  if (space) {
+    const spaceAuth = checkSpaceAdminAuth(req, space)
+    if (spaceAuth.ok) {
+      const ip = getClientIP(req)
+      await redis.resetAdminFailure(ip)
+      return spaceAuth
+    }
+  }
+  if (adminAuth.locked) return adminAuth
   return { ok: false }
 }
 
@@ -612,8 +642,9 @@ async function handleRequest (req, res) {
           return
         }
         const slug = crypto.randomBytes(9).toString('base64url').slice(0, 12)
+        const key = SPACE_KEY_SECRET ? deriveSpaceKey(slug) : null
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ slug }))
+        res.end(JSON.stringify({ slug, key }))
       } catch (err) {
         console.error('POST /spaces error:', err)
         sendError(res, 500, 'Internal server error')
@@ -680,16 +711,16 @@ async function handleRequest (req, res) {
 
     if (req.method === 'POST' && url.pathname === '/pixels') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
-      if (!auth.ok) {
-        res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
-        return
-      }
       try {
         const body = await readBody(req)
         const pixel = JSON.parse(body)
         const space = pixel.space || null
+        const auth = await checkAnyAdminAuth(req, space)
+        if (!auth.ok) {
+          res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
+          return
+        }
         await redis.deleteSubpixels(pixel.id, space)
         await redis.savePixel(pixel, space)
         broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space)
@@ -706,16 +737,16 @@ async function handleRequest (req, res) {
 
     if (req.method === 'POST' && url.pathname === '/pixels/child') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
-      if (!auth.ok) {
-        res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
-        return
-      }
       try {
         const body = await readBody(req)
         const { parentId, childKey, childPixel } = JSON.parse(body)
         const space = childPixel.space || null
+        const auth = await checkAnyAdminAuth(req, space)
+        if (!auth.ok) {
+          res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
+          return
+        }
         const { children } = await redis.saveChildPixel(parentId, childKey, childPixel, space)
         broadcastToViewport(childPixel.lat, childPixel.lng, { type: CONSTANTS.WS_TYPE_CHILD, data: { parentId, childKey, childPixel, childrenCount: children.length } }, space)
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -823,12 +854,13 @@ async function handleRequest (req, res) {
 
     if (req.method === 'POST' && url.pathname === '/admin/verify') {
       setCORS(res)
-      if (!ADMIN_API_KEY) {
-        res.writeHead(403, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ valid: false, error: 'Admin not configured' }))
+      const ip = getClientIP(req)
+      const verifyLimit = await redis.checkIPRateLimit(ip, 'admin_verify', redis.ADMIN_VERIFY_MAX, redis.ADMIN_VERIFY_WINDOW_MS)
+      if (!verifyLimit.allowed) {
+        res.writeHead(429, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Rate limited', retryAfter: verifyLimit.retryAfter }))
         return
       }
-      const ip = getClientIP(req)
       const lockout = await redis.checkAdminRateLimit(ip)
       if (lockout.locked) {
         res.writeHead(429, { 'Content-Type': 'application/json' })
@@ -836,21 +868,34 @@ async function handleRequest (req, res) {
         return
       }
       const auth = req.headers.authorization || ''
-      if (timingSafeEqualStr(auth, `Bearer ${ADMIN_API_KEY}`)) {
+      if (ADMIN_API_KEY && timingSafeEqualStr(auth, `Bearer ${ADMIN_API_KEY}`)) {
         await redis.resetAdminFailure(ip)
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ valid: true }))
-      } else {
-        await redis.incrementAdminFailure(ip)
-        res.writeHead(401, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ valid: false }))
+        res.end(JSON.stringify({ valid: true, source: 'global' }))
+        return
       }
+      const space = parseSpaceParam(url)
+      if (SPACE_KEY_SECRET && space) {
+        const expected = `Bearer ${deriveSpaceKey(space)}`
+        if (timingSafeEqualStr(auth, expected)) {
+          await redis.resetAdminFailure(ip)
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ valid: true, source: 'space' }))
+          return
+        }
+      }
+      if (ADMIN_API_KEY || SPACE_KEY_SECRET) {
+        await redis.incrementAdminFailure(ip)
+      }
+      res.writeHead(401, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ valid: false }))
       return
     }
 
     if (req.method === 'DELETE' && url.pathname === '/admin/region') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
+      const space = parseSpaceParam(url)
+      const auth = await checkAnyAdminAuth(req, space)
       if (!auth.ok) {
         res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
@@ -866,7 +911,6 @@ async function handleRequest (req, res) {
           res.end(JSON.stringify({ error: 'Invalid bounds' }))
           return
         }
-        const space = parseSpaceParam(url)
         const result = await redis.deletePixelsInRegion(n, s, e, w, space)
         for (const pixel of result.deleted) {
           broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: pixel.id } }, space)
@@ -883,16 +927,16 @@ async function handleRequest (req, res) {
 
     if (req.method === 'POST' && url.pathname === '/admin/protect') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
-      if (!auth.ok) {
-        res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
-        return
-      }
       try {
         const body = await readBody(req)
         const data = JSON.parse(body)
-        const space = data.space || null
+        const space = data.space || parseSpaceParam(url) || null
+        const auth = await checkAnyAdminAuth(req, space)
+        if (!auth.ok) {
+          res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
+          return
+        }
         const n = parseFloat(data.n)
         const s = parseFloat(data.s)
         const e = parseFloat(data.e)
@@ -930,16 +974,16 @@ async function handleRequest (req, res) {
 
     if (req.method === 'POST' && url.pathname === '/admin/unprotect') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
-      if (!auth.ok) {
-        res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
-        return
-      }
       try {
         const body = await readBody(req)
         const data = JSON.parse(body)
-        const space = data.space || null
+        const space = data.space || parseSpaceParam(url) || null
+        const auth = await checkAnyAdminAuth(req, space)
+        if (!auth.ok) {
+          res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
+          return
+        }
 
         if (!data.regionId) {
           sendError(res, 400, 'Missing regionId')
@@ -962,16 +1006,16 @@ async function handleRequest (req, res) {
 
     if (req.method === 'POST' && url.pathname === '/admin/extend-ttl') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
-      if (!auth.ok) {
-        res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
-        return
-      }
       try {
         const body = await readBody(req)
         const data = JSON.parse(body)
-        const space = data.space || null
+        const space = data.space || parseSpaceParam(url) || null
+        const auth = await checkAnyAdminAuth(req, space)
+        if (!auth.ok) {
+          res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
+          return
+        }
         const n = parseFloat(data.n)
         const s = parseFloat(data.s)
         const e = parseFloat(data.e)
@@ -998,14 +1042,14 @@ async function handleRequest (req, res) {
 
     if (req.method === 'GET' && url.pathname === '/admin/protected') {
       setCORS(res)
-      const auth = await checkAdminAuth(req)
+      const space = parseSpaceParam(url)
+      const auth = await checkAnyAdminAuth(req, space)
       if (!auth.ok) {
         res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }))
         return
       }
       try {
-        const space = parseSpaceParam(url)
         const data = await redis.getProtectedTiles(space)
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ regions: data.regions, tiles: data.tiles }))

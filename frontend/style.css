@@ -859,6 +859,15 @@ body.menu-open #menu-panel {
   color: #e94560;
 }
 
+#menu-btn-manage-space {
+  color: #4fc3f7;
+}
+
+#menu-btn-manage-space:hover {
+  color: #81d4fa;
+  background: rgba(79, 195, 247, 0.08);
+}
+
 .menu-sep {
   border: none;
   border-top: 1px solid rgba(255,255,255,0.06);
@@ -915,6 +924,169 @@ body.menu-open #menu-panel {
   background: rgba(233, 69, 96, 0.2) !important;
   border-color: rgba(233, 69, 96, 0.4) !important;
   color: #e94560 !important;
+}
+
+/* ── Space key modal ── */
+#space-key-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+
+.space-key-box {
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 320px;
+  max-width: 90vw;
+  text-align: center;
+  color: rgba(255,255,255,0.85);
+  font-size: 13px;
+}
+
+.space-key-box h2 {
+  color: #fff;
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.space-key-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.space-key-field label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: rgba(255,255,255,0.4);
+  width: 40px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.space-key-field input {
+  flex: 1;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #fff;
+  font-family: monospace;
+  font-size: 12px;
+  outline: none;
+  min-width: 0;
+}
+
+.space-key-field input:focus {
+  border-color: rgba(255,255,255,0.3);
+}
+
+.space-key-copy-btn {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: rgba(255,255,255,0.7);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.space-key-copy-btn:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+.space-key-copy-btn.copied {
+  color: #4fc3f7;
+  border-color: rgba(79, 195, 247, 0.4);
+}
+
+.space-key-warning {
+  margin: 14px 0;
+  padding: 10px 12px;
+  background: rgba(233, 69, 96, 0.12);
+  border: 1px solid rgba(233, 69, 96, 0.25);
+  border-radius: 8px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  line-height: 1.5;
+}
+
+.space-key-actions {
+  display: flex;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.space-key-actions button {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.85);
+  transition: background 0.15s ease;
+}
+
+.space-key-actions button:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+.space-key-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+}
+
+.space-key-checkbox input {
+  accent-color: #e94560;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.space-key-continue {
+  width: 100%;
+  background: #e94560;
+  color: #fff;
+  border: none;
+  padding: 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  letter-spacing: 0.3px;
+}
+
+.space-key-continue:hover {
+  background: #d63851;
+}
+
+.space-key-continue:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* ── Safe area insets ── */
@@ -990,5 +1162,10 @@ body.menu-open #menu-panel {
   }
   .toast-item.has-action.visible {
     transform: translateY(0);
+  }
+  .space-key-box {
+    min-width: unset;
+    width: calc(100vw - 32px);
+    padding: 20px;
   }
 }

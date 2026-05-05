@@ -145,9 +145,10 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 
 - **URL**: `pixhood.art/s/<slug>` (path-based, Cloudflare Pages `_redirects` routes to SPA)
 - **Slug**: 12-char base62 string (`crypto.randomBytes(9).toString('base64url').slice(0, 12)`), ~3.2 × 10²¹ combinations
-- **Creation**: `POST /spaces` → `{ slug }`. Rate-limited: 10/min per IP. No Redis state until first paint (lazy).
+- **Creation**: `POST /spaces` → `{ slug, key }`. Rate-limited: 10/min per IP. No Redis state until first paint (lazy). Key is an HMAC-derived admin key for the space.
 - **Privacy**: Invalid/unknown slug returns `[]` (identical to empty space). No enumeration endpoints. Global read rate limit (300/min per IP) makes brute-force impractical.
 - **Isolation**: Redis keys prefixed with `space:<slug>:`. Each space has its own geo index, pixel keys, and subpixel hashes. Broadcasts are scoped to connections in the same space.
+- **Admin keys**: Space creators receive a deterministic admin key (`sk_<base64url>`) derived from `HMAC-SHA256(SPACE_KEY_SECRET, slug)`. Stored in browser `localStorage` as `space_key:<slug>`. No Redis state for keys — verification is purely computational. Keys are scoped to a single space and cannot be used for global admin operations. Lost keys cannot be recovered.
 
 ### Space-aware architecture
 
@@ -159,9 +160,9 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 
 **Rate limits**: IP write rate limits are per-space (`space:ratelimit:write:<ip>:<space>`). Session burst/sustained checks stay global via paint log. Read rate limits stay global.
 
-**Admin**: Admin endpoints operate on a single space (passed via `space` query param or from paint log entries during revert). `DELETE /admin/region` accepts optional `space` param.
+**Admin**: Admin endpoints accept either global `ADMIN_API_KEY` (via `checkAdminAuth`) or space-derived admin key (via `checkSpaceAdminAuth`). Space keys are verified by recomputing `HMAC-SHA256(SPACE_KEY_SECRET, slug)` and comparing with timing-safe equality. Space keys are scoped: they only work for their own space and fail for global (no `space` param) or other spaces' endpoints. `POST /admin/verify` accepts optional `?space=<slug>` query param to verify space keys.
 
-**Frontend**: `CONFIG.SPACE` parsed from URL path in `config.js`. Passed as query param to HTTP API calls and as WS connection param. Welcome screen shows "Create Space" / "Join Space" buttons. Topbar shows space slug with copy-link button when inside a space.
+**Frontend**: `CONFIG.SPACE` parsed from URL path in `config.js`. Passed as query param to HTTP API calls and as WS connection param. Welcome screen shows "Create Space" / "Join Space" buttons. Topbar shows space slug with copy-link button when inside a space. Space creation shows a key modal with copy/download/checkbox-gated continuation. Space admin key stored in `localStorage` as `space_key:<slug>`. Side-menu shows "Manage Space" button when key is stored, which opens the admin panel.
 
 **Service worker**: Navigation to `/s/<slug>` handled by existing network-first strategy. Cloudflare Pages `_redirects` serves `index.html` for all `/s/*` paths.
 
@@ -196,10 +197,10 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL — but does NO
 | `GET` | `/health` | Health check, returns `{status:'ok'}`. No auth required. |
 | `GET` | `/pixels?n=&s=&e=&w=&space=` | Viewport query: pixels in bounding box. Always includes children. Optional `space` param. |
 | `GET` | `/protected-regions?space=` | List all protected regions (public, no auth). Returns `[{id, n, s, e, w}]`. |
-| `POST` | `/spaces` | Create space: returns `{ slug }`. Rate-limited 10/min per IP. No auth required. |
+| `POST` | `/spaces` | Create space: returns `{ slug, key }`. Rate-limited 10/min per IP. No auth required. Key is null if SPACE_KEY_SECRET not configured. |
 | `POST` | `/pixels` | Save parent pixel (admin only). Erases children, broadcasts. |
 | `POST` | `/pixels/child` | Save child pixel (admin only). Broadcasts. |
-| `POST` | `/admin/verify` | Verify admin API key. Rate limited: 5 attempts per IP, 15min lockout. |
+| `POST` | `/admin/verify` | Verify admin API key or space admin key. Accepts optional `?space=<slug>` query param to verify space keys. Rate limited: 5 attempts per IP, 15min lockout. |
 | `GET` | `/admin/sessions` | List active sessions with paint count and last location (requires auth). Uses `SCAN paintlog:*`. |
 | `GET` | `/admin/session/:sessionId` | Get paint log for a session (requires auth) |
 | `GET` | `/admin/flagged` | List flagged sessions (requires auth) |
@@ -372,14 +373,19 @@ All `/admin/*` endpoints and HTTP paint endpoints (`POST /pixels`, `POST /pixels
 
 - **Input validation**: `validatePaintParent()` and `validatePaintChild()` reject WS paint messages with invalid `tileKey` (must match `/^-?\d+(_-?\d+)+$/`), `color` (case-insensitive `/^#[0-9a-f]{6}$/`), `lat`/`lng` ranges, `subX`/`subY` (0–15). `handlePaintErase` validates `tileKey` and `lat`/`lng`. Rejected with `{type: "paintError", reason: "invalid_input"}`.
 - **Request body size limit**: 10KB max for HTTP requests. WS `maxPayload: 10KB`. Exceeds → 413 (HTTP) or connection close (WS).
-- **Timing-safe auth**: `timingSafeEqualStr()` using `crypto.timingSafeEqual` for admin token comparison, prevents timing attacks.
+- **Timing-safe auth**: `timingSafeEqualStr()` using `crypto.timingSafeEqual` for admin token and space key comparison, prevents timing attacks.
+- **HMAC-derived space keys**: Space admin keys are derived deterministically via `HMAC-SHA256(SPACE_KEY_SECRET, slug)` → base64url → `sk_` prefix. No storage needed. Knowing a key for one space reveals nothing about keys for other spaces. `checkSpaceAdminAuth()` verifies by recomputing the expected key and comparing with timing-safe equality. Space keys are scoped to a single space — `checkAnyAdminAuth()` combines global admin check with space-specific check; space keys are rejected for global endpoints (no `space` param).
 - **XSS protection**: Admin panel uses `escapeHtml()` and `safeColor()` for all user-controlled innerHTML. No raw string interpolation.
 - **WS Origin validation**: `verifyClient` rejects connections from unauthorized origins at handshake level. Blocks connections without Origin header.
 - **Session ref-counting**: `sessionRefCounts` Map ensures session state isn't destroyed when a single WS connection drops if the same session has other active connections.
 
 ### Admin panel
 
-Activated via URL hash `#admin`. `admin.js` and `admin.css` are loaded dynamically (not fetched by regular users). Token stored in `sessionStorage` (cleared on tab close).
+**Global admin**: Activated via URL hash `#admin`. `admin.js` and `admin.css` are loaded dynamically (not fetched by regular users). Global admin token stored in `sessionStorage` (cleared on tab close).
+
+**Space admin**: When a space admin key is stored in `localStorage` (`space_key:<slug>`), the side-menu shows a "Manage Space" button that opens the admin panel directly (no token prompt). Space admin keys are HMAC-derived from the slug and a server-side secret — no storage needed. Space keys are scoped: they only work for their own space's admin endpoints.
+
+Admin panel positioned below the topbar (`top: 50px`) so it doesn't cover the color palette. Can be closed and reopened from the side-menu.
 
 **Tools:**
 - **Inspect mode**: Click any pixel to see its session ID, color, paint time, protection status (Protected/TTL extended), and children count. Session ID links to the inspector. Protected pixels show matching region IDs with "Unprotect" buttons. Mutually exclusive with region modes.
@@ -442,3 +448,4 @@ User accounts, pixel ownership, social features, mobile app.
 | `PORT` | `3000` | HTTP server port |
 | `CORS_ORIGIN` | `http://localhost:{PORT}` | CORS allowed origin |
 | `ADMIN_API_KEY` | — | Bearer token for `/admin/*` endpoints |
+| `SPACE_KEY_SECRET` | — | HMAC secret for deriving space admin keys. When set, `POST /spaces` returns a `key` field. When null, no key is returned. |

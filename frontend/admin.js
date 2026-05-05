@@ -1,5 +1,8 @@
 const ADMIN_TOKEN_KEY = 'admin_token';
+const SPACE_KEY_PREFIX = 'space_key:';
 let _adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
+let _spaceAdminKey = CONFIG.SPACE ? localStorage.getItem(SPACE_KEY_PREFIX + CONFIG.SPACE) : null;
+let _isAdminPanelOpen = false;
 let _inspectMode = false;
 let _activeRegionDraw = null;
 
@@ -182,25 +185,43 @@ function safeColor(c) {
 }
 
 function adminHeaders() {
-  return { 'Authorization': `Bearer ${_adminToken}`, 'Content-Type': 'application/json' };
+  const token = _spaceAdminKey || _adminToken;
+  return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 }
 
 async function adminFetch(path, options = {}) {
-  const res = await fetch(`${CONFIG.API_URL}${path}`, { ...options, headers: { ...adminHeaders(), ...(options.headers || {}) } });
+  let fullPath = path;
+  if (CONFIG.SPACE && !fullPath.includes('space=')) {
+    const sep = fullPath.includes('?') ? '&' : '?';
+    fullPath = `${fullPath}${sep}space=${encodeURIComponent(CONFIG.SPACE)}`;
+  }
+  const res = await fetch(`${CONFIG.API_URL}${fullPath}`, { ...options, headers: { ...adminHeaders(), ...(options.headers || {}) } });
   if (res.status === 401) {
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-    _adminToken = null;
     const panel = document.getElementById('admin-panel');
     if (panel) panel.remove();
+    _isAdminPanelOpen = false;
+    if (_spaceAdminKey) {
+      localStorage.removeItem(SPACE_KEY_PREFIX + CONFIG.SPACE);
+      _spaceAdminKey = null;
+      showToast('Admin key is invalid — it may have been revoked');
+      return null;
+    }
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    _adminToken = null;
     showTokenPrompt('Token expired or invalid — please re-enter');
     return null;
   }
   if (res.status === 429) {
     const data = await res.json().catch(() => ({}));
-    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
-    _adminToken = null;
     const panel = document.getElementById('admin-panel');
     if (panel) panel.remove();
+    _isAdminPanelOpen = false;
+    if (_spaceAdminKey) {
+      showToast(`Too many failed attempts. Try again in ${data.retryAfter || 900}s`);
+      return null;
+    }
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    _adminToken = null;
     showTokenPrompt(`Too many failed attempts. Try again in ${data.retryAfter || 900}s`);
     return null;
   }
@@ -209,7 +230,9 @@ async function adminFetch(path, options = {}) {
 
 async function verifyToken(token) {
   try {
-    const res = await fetch(`${CONFIG.API_URL}/admin/verify`, {
+    let url = `${CONFIG.API_URL}/admin/verify`;
+    if (CONFIG.SPACE) url += `?space=${encodeURIComponent(CONFIG.SPACE)}`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
     });
@@ -239,9 +262,27 @@ function relativeTime(ts) {
 function createAdminPanel() {
   const panel = document.createElement('div');
   panel.id = 'admin-panel';
+  const isSpaceAdmin = !!(_spaceAdminKey && CONFIG.SPACE);
+  const title = isSpaceAdmin ? `Admin · ${escapeHtml(CONFIG.SPACE)}` : 'Admin';
+  const globalSections = isSpaceAdmin ? '' : `
+    <div class="admin-section">
+      <h3>Sessions</h3>
+      <button class="admin-btn" id="admin-load-sessions">Load Active Sessions</button>
+      <div id="admin-sessions-list" class="admin-list"></div>
+    </div>
+    <div class="admin-section admin-section-collapsible">
+      <h3 class="admin-collapsible-toggle" id="admin-flagged-toggle">Flagged Sessions ▸</h3>
+      <div id="admin-flagged-list" class="admin-list admin-collapsible-content"></div>
+    </div>
+    <div class="admin-section">
+      <h3>Session Inspector</h3>
+      <input type="text" id="admin-session-input" placeholder="Paste session ID" class="admin-input" />
+      <button class="admin-btn" id="admin-lookup">Lookup</button>
+      <div id="admin-session-detail" class="admin-list"></div>
+    </div>`;
   panel.innerHTML = `
     <div class="admin-header">
-      <span class="admin-title">Admin</span>
+      <span class="admin-title">${title}</span>
       <button class="admin-close" id="admin-close">&times;</button>
     </div>
     <div class="admin-section">
@@ -258,37 +299,26 @@ function createAdminPanel() {
       <div id="admin-region-info" class="admin-mode-info"></div>
     </div>
     <div class="admin-section">
-      <h3>Sessions</h3>
-      <button class="admin-btn" id="admin-load-sessions">Load Active Sessions</button>
-      <div id="admin-sessions-list" class="admin-list"></div>
-    </div>
-    <div class="admin-section">
       <h3>Protected Regions</h3>
       <button class="admin-btn admin-btn-protect" id="admin-load-regions">Load Regions</button>
       <div id="admin-regions-list" class="admin-list"></div>
     </div>
-    <div class="admin-section admin-section-collapsible">
-      <h3 class="admin-collapsible-toggle" id="admin-flagged-toggle">Flagged Sessions ▸</h3>
-      <div id="admin-flagged-list" class="admin-list admin-collapsible-content"></div>
-    </div>
-    <div class="admin-section">
-      <h3>Session Inspector</h3>
-      <input type="text" id="admin-session-input" placeholder="Paste session ID" class="admin-input" />
-      <button class="admin-btn" id="admin-lookup">Lookup</button>
-      <div id="admin-session-detail" class="admin-list"></div>
-    </div>
+    ${globalSections}
   `;
   document.body.appendChild(panel);
 
   document.getElementById('admin-close').addEventListener('click', () => {
     panel.remove();
+    _isAdminPanelOpen = false;
     disableInspectMode();
     if (_activeRegionDraw) deactivateRegionMode();
   });
 
-  document.getElementById('admin-load-sessions').addEventListener('click', loadSessions);
+  const loadSessionsBtn = document.getElementById('admin-load-sessions');
+  if (loadSessionsBtn) loadSessionsBtn.addEventListener('click', loadSessions);
   document.getElementById('admin-load-regions').addEventListener('click', loadRegions);
-  document.getElementById('admin-lookup').addEventListener('click', lookupSession);
+  const lookupBtn = document.getElementById('admin-lookup');
+  if (lookupBtn) lookupBtn.addEventListener('click', lookupSession);
   document.getElementById('admin-inspect-btn').addEventListener('click', toggleInspectMode);
 document.getElementById('admin-protect-btn').addEventListener('click', () => {
   if (_activeRegionDraw === 'protect') deactivateRegionMode();
@@ -302,7 +332,8 @@ document.getElementById('admin-region-btn').addEventListener('click', () => {
   if (_activeRegionDraw === 'erase') deactivateRegionMode();
   else activateRegionMode('erase');
 });
-  document.getElementById('admin-flagged-toggle').addEventListener('click', toggleFlaggedSection);
+  const flaggedToggle = document.getElementById('admin-flagged-toggle');
+  if (flaggedToggle) flaggedToggle.addEventListener('click', toggleFlaggedSection);
 }
 
 function toggleFlaggedSection() {
@@ -777,6 +808,26 @@ function showTokenPrompt(errorMsg) {
   btn.addEventListener('click', submit);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 }
+
+function openSpaceAdminPanel() {
+  const existing = document.getElementById('admin-panel');
+  if (existing) {
+    existing.remove();
+    disableInspectMode();
+    if (_activeRegionDraw) deactivateRegionMode();
+    _isAdminPanelOpen = false;
+    return;
+  }
+  _spaceAdminKey = localStorage.getItem(SPACE_KEY_PREFIX + CONFIG.SPACE);
+  if (!_spaceAdminKey) {
+    if (typeof showToast === 'function') showToast('Admin key not found for this space');
+    return;
+  }
+  _isAdminPanelOpen = true;
+  createAdminPanel();
+}
+
+window.openSpaceAdminPanel = openSpaceAdminPanel;
 
 async function initAdmin() {
   if (_adminToken) {
