@@ -52,7 +52,7 @@ async function loadViewport(viewportBounds, zoom) {
   return pixels;
 }
 
-async function writePixel(lat, lng, color) {
+async function writePixel(lat, lng, color, prev) {
   const tile = snapToTile(lat, lng);
   const msg = {
     type: CONFIG.WS_TYPE_PAINT_PARENT,
@@ -62,11 +62,11 @@ async function writePixel(lat, lng, color) {
     lng: tile.lng,
     color
   };
-  _sendPaint(msg);
+  _sendPaint(msg, prev);
   return { id: tile.key, lat: tile.lat, lng: tile.lng, color, hasChildren: false };
 }
 
-async function writeChildPixel(parentKey, lat, lng, color) {
+async function writeChildPixel(parentKey, lat, lng, color, prev) {
   const sub = snapToSubTile(parentKey, lat, lng);
   const msg = {
     type: CONFIG.WS_TYPE_PAINT_CHILD,
@@ -79,11 +79,11 @@ async function writeChildPixel(parentKey, lat, lng, color) {
     lng: sub.lng,
     color
   };
-  _sendPaint(msg);
+  _sendPaint(msg, prev);
   return { id: sub.key, parentId: parentKey, subX: sub.subX, subY: sub.subY, lat: sub.lat, lng: sub.lng, color };
 }
 
-async function writeErasePixel(lat, lng) {
+async function writeErasePixel(lat, lng, prev) {
   const tile = snapToTile(lat, lng);
   const msg = {
     type: CONFIG.WS_TYPE_PAINT_ERASE,
@@ -92,7 +92,7 @@ async function writeErasePixel(lat, lng) {
     lat: tile.lat,
     lng: tile.lng
   };
-  _sendPaint(msg);
+  _sendPaint(msg, prev);
   return { id: tile.key, lat: tile.lat, lng: tile.lng };
 }
 
@@ -116,22 +116,28 @@ let _reconnectTimer = null;
 
 function nextPaintId() { return ++_paintSeq; }
 
-function _sendPaint(msg) {
+function _sendPaint(msg, prev) {
   if (!_ws || _ws.readyState !== 1) {
     if (_onPaintError) _onPaintError('no_connection');
     return;
   }
   _ws.send(JSON.stringify(msg));
+  const entry = { tileKey: msg.tileKey, type: msg.type, parentId: msg.parentId, prev };
   const timer = setTimeout(() => {
     _pendingPaints.delete(msg.id);
-    if (_onPaintError) _onPaintError('timeout');
+    if (_onPaintError) _onPaintError('timeout', 1, null, entry);
   }, CONFIG.PAINT_ACK_TIMEOUT);
-  _pendingPaints.set(msg.id, timer);
+  entry.timer = timer;
+  _pendingPaints.set(msg.id, entry);
+}
+
+function isWebSocketConnected() {
+  return _ws && _ws.readyState === 1;
 }
 
 function _flushPending() {
   const count = _pendingPaints.size;
-  for (const [, timer] of _pendingPaints) clearTimeout(timer);
+  for (const [, entry] of _pendingPaints) clearTimeout(entry.timer);
   _pendingPaints.clear();
   if (count > 0 && _onPaintError) _onPaintError('disconnect', count);
 }
@@ -197,17 +203,17 @@ function _openWS() {
         return;
       }
       if (msg.type === CONFIG.WS_TYPE_PAINT_ACK) {
-        const timer = _pendingPaints.get(msg.id);
-        if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
+        const entry = _pendingPaints.get(msg.id);
+        if (entry) { clearTimeout(entry.timer); _pendingPaints.delete(msg.id); }
       }
       if (msg.type === CONFIG.WS_TYPE_PAINT_ERROR) {
-        const timer = _pendingPaints.get(msg.id);
-        if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
-        if (_onPaintError) _onPaintError(msg.reason, 1, msg.retryAfter);
+        const entry = _pendingPaints.get(msg.id);
+        if (entry) { clearTimeout(entry.timer); _pendingPaints.delete(msg.id); }
+        if (_onPaintError) _onPaintError(msg.reason, 1, msg.retryAfter, entry);
       }
       if (msg.type === CONFIG.WS_TYPE_UNDO_RESULT) {
-        const timer = _pendingPaints.get(msg.id);
-        if (timer) { clearTimeout(timer); _pendingPaints.delete(msg.id); }
+        const entry = _pendingPaints.get(msg.id);
+        if (entry) { clearTimeout(entry.timer); _pendingPaints.delete(msg.id); }
         scheduleViewportRefresh();
       }
       if (msg.type === CONFIG.WS_TYPE_BLOCKED && _onBlocked) _onBlocked();

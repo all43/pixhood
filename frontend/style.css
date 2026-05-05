@@ -160,6 +160,10 @@ html, body {
   cursor: grab;
 }
 
+#map.map-protected {
+  cursor: not-allowed !important;
+}
+
 #map-flash {
   position: absolute;
   inset: 0;

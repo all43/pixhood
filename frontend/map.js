@@ -126,6 +126,23 @@ function initMap(lat, lng) {
 
   map.on('zoomend', onZoomChange);
   map.on('click', handleMapClick);
+  map.on('mousemove', (e) => {
+    if (_protectedHoverTimer) return;
+    _protectedHoverTimer = setTimeout(() => { _protectedHoverTimer = null; }, 100);
+    const mapEl = document.getElementById('map');
+    if (mapEl.classList.contains('region-select-mode') || mapEl.classList.contains('inspect-mode')) {
+      mapEl.classList.remove('map-protected');
+      return;
+    }
+    if (map.getZoom() >= CONFIG.GRID_ZOOM_THRESHOLD && isInProtectedRegion(e.latlng.lat, e.latlng.lng)) {
+      mapEl.classList.add('map-protected');
+    } else {
+      mapEl.classList.remove('map-protected');
+    }
+  });
+  map.on('mouseout', () => {
+    document.getElementById('map').classList.remove('map-protected');
+  });
 
   return map;
 }
@@ -372,18 +389,97 @@ async function handleLocate() {
   }
 }
 
+function pointInPolygon(testLat, testLng, outline) {
+  let inside = false;
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+    const latI = outline[i][0], lngI = outline[i][1];
+    const latJ = outline[j][0], lngJ = outline[j][1];
+    if (((latI > testLat) !== (latJ > testLat)) &&
+        (testLng < (lngJ - lngI) * (testLat - latI) / (latJ - latI) + lngI)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function isInProtectedRegion(lat, lng) {
+  for (const region of protectedRegionsCache) {
+    if (region.outline && region.outline.length >= 3 && pointInPolygon(lat, lng, region.outline)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function revertOptimisticPaint(entry) {
+  if (!entry) return;
+  const { tileKey, type, parentId, prev } = entry;
+
+  if (type === CONFIG.WS_TYPE_PAINT_PARENT || type === CONFIG.WS_TYPE_PAINT_ERASE) {
+    if (prev && prev.children) {
+      renderParentWithChildren({ id: tileKey, lat: prev.lat, lng: prev.lng, color: prev.color, hasChildren: true, children: prev.children });
+    } else if (prev) {
+      renderPixel({ id: tileKey, lat: prev.lat, lng: prev.lng, color: prev.color, hasChildren: false });
+    } else if (type === CONFIG.WS_TYPE_PAINT_PARENT) {
+      removePixel(tileKey);
+    }
+  } else if (type === CONFIG.WS_TYPE_PAINT_CHILD) {
+    if (prev && prev.children) {
+      childrenCache[parentId] = prev.children.map(c => ({ ...c }));
+    } else if (prev) {
+      delete childrenCache[parentId];
+    } else {
+      delete childrenCache[parentId];
+    }
+    if (childLayers[parentId]) {
+      for (const rect of childLayers[parentId]) map.removeLayer(rect);
+      delete childLayers[parentId];
+    }
+    if (childrenCache[parentId] && childrenCache[parentId].length > 0) {
+      if (pixelLayers[parentId]) {
+        const pd = pixelLayers[parentId]._pixelData || {};
+        renderParentWithChildren({ id: parentId, color: pd.color, hasChildren: true, children: childrenCache[parentId] });
+      }
+      if (map.getZoom() >= CONFIG.SUB_GRID_ZOOM) {
+        renderChildren(parentId, childrenCache[parentId]);
+      }
+    } else if (pixelLayers[parentId] && pixelLayers[parentId]._pixelData) {
+      const pd = pixelLayers[parentId]._pixelData;
+      pixelLayers[parentId].setStyle({ fillColor: pd.color, color: pd.color, fillOpacity: CONFIG.PIXEL_OPACITY });
+    }
+  }
+}
+
+let _protectedHoverTimer = null;
+
+function _capturePrev(tileKey) {
+  const pd = pixelLayers[tileKey] && pixelLayers[tileKey]._pixelData;
+  if (!pd) return null;
+  const ch = childrenCache[tileKey];
+  return { lat: pd.lat, lng: pd.lng, color: pd.color, children: ch && ch.length > 0 ? ch.map(c => ({ ...c })) : null };
+}
+
 function handleMapClick(e) {
   if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
   const mapEl = document.getElementById('map');
   if (mapEl.classList.contains('region-select-mode') || mapEl.classList.contains('inspect-mode')) return;
-
+  if (!isWebSocketConnected()) {
+    showToast('Not connected \u2014 try again');
+    return;
+  }
   const { lat, lng } = e.latlng;
+  if (isInProtectedRegion(lat, lng)) {
+    showToast('This area is protected');
+    return;
+  }
+
   const color = getSelectedColor();
 
   if (color === CONFIG.ERASE_COLOR) {
     const tile = snapToTile(lat, lng);
+    const prev = _capturePrev(tile.key);
     removePixel(tile.key);
-    writeErasePixel(lat, lng);
+    writeErasePixel(lat, lng, prev);
     recordPaint(lat, lng);
     return;
   }
@@ -392,6 +488,7 @@ function handleMapClick(e) {
     const tile = snapToTile(lat, lng);
     const sub = snapToSubTile(tile.key, lat, lng);
     const subBounds = subTileBounds(tile.key, sub.subX, sub.subY);
+    const prev = _capturePrev(tile.key);
     renderChildPixel(tile.key, sub.key, subBounds, color);
 
     const childData = { subX: sub.subX, subY: sub.subY, color };
@@ -404,13 +501,14 @@ function handleMapClick(e) {
     }
     updateParentDisplay(tile.key);
 
-    writeChildPixel(tile.key, lat, lng, color);
+    writeChildPixel(tile.key, lat, lng, color, prev);
     recordPaint(lat, lng);
   } else {
     const tile = snapToTile(lat, lng);
+    const prev = _capturePrev(tile.key);
     renderPixel({ id: tile.key, lat: tile.lat, lng: tile.lng, color, hasChildren: false });
 
-    writePixel(lat, lng, color);
+    writePixel(lat, lng, color, prev);
     recordPaint(lat, lng);
   }
 }

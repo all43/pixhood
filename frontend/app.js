@@ -432,29 +432,29 @@ function onWSDelete(data) {
   removePixel(data.id);
 }
 
-function onPaintError(reason, count, retryAfter) {
+function onPaintError(reason, count, retryAfter, entry) {
+  if (entry) {
+    revertOptimisticPaint(entry);
+  }
+
   if (reason === 'rate_limited') {
     showToast(`Slow down! Try again in ${retryAfter || 30}s`);
   } else if (reason === 'blocked') {
     showToast('Painting suspended — your session was flagged');
+    scheduleViewportRefresh();
   } else if (reason === 'protected') {
     showToast('This area is protected');
-    scheduleViewportRefresh();
+  } else if (reason === 'timeout') {
+    showToast('Paint may not have saved — server slow to respond');
   } else if (reason === 'no_viewport') {
     showToast('Connecting \u2014 try again in a moment');
-    scheduleViewportRefresh();
-  } else if (reason === 'timeout') {
-    showToast('Paint may not have saved \u2014 server slow to respond');
-    scheduleViewportRefresh();
   } else if (reason === 'disconnect') {
     showToast(`${count} paint(s) didn\u2019t save \u2014 reconnecting`);
     scheduleViewportRefresh();
   } else if (reason === 'no_connection') {
     showToast('Not connected \u2014 try again');
-    scheduleViewportRefresh();
   } else {
     showToast('Paint failed to save');
-    scheduleViewportRefresh();
   }
 }
 
