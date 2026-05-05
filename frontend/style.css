@@ -929,6 +929,118 @@ body.menu-open #menu-panel {
   color: #e94560 !important;
 }
 
+/* ── Create space confirm modal ── */
+#create-space-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+
+.create-space-box {
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 320px;
+  max-width: 90vw;
+  text-align: center;
+  color: rgba(255,255,255,0.85);
+  font-size: 13px;
+}
+
+.create-space-box h2 {
+  color: #fff;
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.create-space-text {
+  text-align: left;
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+
+.create-space-text p {
+  margin: 0 0 10px;
+  color: rgba(255,255,255,0.65);
+  font-size: 13px;
+}
+
+.create-space-text p:last-child {
+  margin-bottom: 0;
+}
+
+#create-space-error {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 0.6rem 0.8rem;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid rgba(233, 69, 96, 0.3);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.8);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+#create-space-error.hidden { display: none; }
+
+.create-space-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.create-space-cancel {
+  flex: 1;
+  background: transparent;
+  color: rgba(255,255,255,0.45);
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.create-space-cancel:hover {
+  border-color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.7);
+}
+
+.create-space-cancel:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.create-space-go {
+  flex: 1;
+  background: #e94560;
+  color: #fff;
+  border: none;
+  padding: 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  letter-spacing: 0.3px;
+}
+
+.create-space-go:hover {
+  background: #d63851;
+}
+
+.create-space-go:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* ── Space key modal ── */
 #space-key-modal {
   position: fixed;
@@ -1166,7 +1278,8 @@ body.menu-open #menu-panel {
   .toast-item.has-action.visible {
     transform: translateY(0);
   }
-  .space-key-box {
+  .space-key-box,
+  .create-space-box {
     min-width: unset;
     width: calc(100vw - 32px);
     padding: 20px;

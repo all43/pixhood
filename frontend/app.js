@@ -25,6 +25,61 @@ function storeSpaceKey(slug, key) {
   localStorage.setItem(CONFIG.SPACE_KEY_PREFIX + slug, key);
 }
 
+function showCreateSpaceConfirmModal() {
+  const existing = document.getElementById('create-space-modal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'create-space-modal';
+  overlay.innerHTML = `
+    <div class="create-space-box">
+      <h2>Create a Space</h2>
+      <div class="create-space-text">
+        <p>A Space is a private area on the map — only people with the link can paint there. It's a safe way for friends, family, and especially children to create art together without interference.</p>
+        <p>As the creator, you get extra controls: protect artwork from being overwritten, extend how long it lasts, and erase unwanted pixels.</p>
+        <p>The Space link is the only way in. Share it only with people you want to paint with — anyone with the link can join. If the link gets out, simply abandon this Space and create a new one.</p>
+      </div>
+      <div id="create-space-error" class="hidden"></div>
+      <div class="create-space-buttons">
+        <button class="create-space-cancel" id="create-space-cancel">Cancel</button>
+        <button class="create-space-go" id="create-space-go">Create Space</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('create-space-cancel').addEventListener('click', () => {
+    overlay.remove();
+  });
+
+  document.getElementById('create-space-go').addEventListener('click', async () => {
+    const goBtn = document.getElementById('create-space-go');
+    const cancelBtn = document.getElementById('create-space-cancel');
+    const errEl = document.getElementById('create-space-error');
+    goBtn.disabled = true;
+    goBtn.textContent = 'Creating\u2026';
+    cancelBtn.disabled = true;
+
+    try {
+      const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
+      if (!res.ok) throw new Error(res.status);
+      const { slug, key } = await res.json();
+      overlay.remove();
+      if (key) {
+        showSpaceKeyModal(slug, key);
+      } else {
+        location.href = `/s/${slug}`;
+      }
+    } catch {
+      errEl.textContent = 'Could not create space \u2014 check your internet connection.';
+      errEl.classList.remove('hidden');
+      goBtn.disabled = false;
+      goBtn.textContent = 'Create Space';
+      cancelBtn.disabled = false;
+    }
+  });
+}
+
 function showSpaceKeyModal(slug, key) {
   const existing = document.getElementById('space-key-modal');
   if (existing) existing.remove();
@@ -639,19 +694,8 @@ async function proceedToMap(geoResult, pixelsPromise) {
 }
 
 function initSpaceUI() {
-  document.getElementById('btn-create-space').addEventListener('click', async () => {
-    try {
-      const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
-      if (!res.ok) throw new Error(res.status);
-      const { slug, key } = await res.json();
-      if (key) {
-        showSpaceKeyModal(slug, key);
-      } else {
-        location.href = `/s/${slug}`;
-      }
-    } catch {
-      showWelcomeError('Could not create space — check your internet connection.');
-    }
+  document.getElementById('btn-create-space').addEventListener('click', () => {
+    showCreateSpaceConfirmModal();
   });
 
   document.getElementById('btn-join-space').addEventListener('click', () => {
@@ -773,20 +817,9 @@ function initMenu() {
     if (e.key === 'Escape' && document.body.classList.contains('menu-open')) closeMenu();
   });
 
-  createBtn.addEventListener('click', async () => {
+  createBtn.addEventListener('click', () => {
     closeMenu();
-    try {
-      const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
-      if (!res.ok) throw new Error(res.status);
-      const { slug, key } = await res.json();
-      if (key) {
-        showSpaceKeyModal(slug, key);
-      } else {
-        location.href = `/s/${slug}`;
-      }
-    } catch {
-      showToast('Could not create space — check your internet connection.');
-    }
+    showCreateSpaceConfirmModal();
   });
 
   joinBtn.addEventListener('click', () => {
