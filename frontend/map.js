@@ -368,12 +368,18 @@ function renderPixels(pixels) {
       childrenCache[pixel.id] = pixel.children;
       renderParentWithChildren(pixel);
     } else {
-      renderPixel(pixel);
-      if (childLayers[pixel.id]) {
-        for (const rect of childLayers[pixel.id]) map.removeLayer(rect);
-        delete childLayers[pixel.id];
+      const localChildren = childrenCache[pixel.id];
+      if (localChildren && localChildren.length > 0) {
+        childrenCache[pixel.id] = localChildren;
+        renderParentWithChildren({ ...pixel, hasChildren: true, children: localChildren });
+      } else {
+        renderPixel(pixel);
+        if (childLayers[pixel.id]) {
+          for (const rect of childLayers[pixel.id]) map.removeLayer(rect);
+          delete childLayers[pixel.id];
+        }
+        delete childrenCache[pixel.id];
       }
-      delete childrenCache[pixel.id];
     }
   }
 }
@@ -427,6 +433,17 @@ function updateParentDisplay(parentId) {
   const display = computeParentDisplay(children);
   if (pixelLayers[parentId]) {
     pixelLayers[parentId].setStyle({ fillColor: display.color, color: display.color, fillOpacity: display.opacity });
+  } else {
+    const bounds = tileBounds(parentId);
+    const rect = L.rectangle([bounds.sw, bounds.ne], {
+      color: display.color,
+      fillColor: display.color,
+      fillOpacity: display.opacity,
+      weight: 0,
+      interactive: false
+    });
+    rect.addTo(map);
+    pixelLayers[parentId] = rect;
   }
 }
 

@@ -260,7 +260,7 @@ async function revertSession(sessionId) {
     entries.sort((a, b) => a.timestamp - b.timestamp);
     const space = entries[0].space || null;
     try {
-      const hasParentPaint = entries.some(e => e.type === 'parent');
+      const hasParentPaint = entries.some(e => e.type === 'parent' || e.type === 'erase');
 
       if (hasParentPaint) {
         const firstParent = entries.find(e => e.type === 'parent');

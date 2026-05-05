@@ -14,12 +14,15 @@ function needsRefetch(viewportBounds) {
   if (!_loadedBounds) return true;
   const vb = viewportBounds;
   const lb = _loadedBounds;
+  const divisor = 1 + 2 * CONFIG.VIEWPORT_MARGIN;
+  const bufLat = (lb.n - lb.s) / divisor;
+  const bufLng = (lb.e - lb.w) / divisor;
   const margin = CONFIG.REFETCH_THRESHOLD;
   return (
-    vb.n > lb.n - (lb.n - lb.s) * margin ||
-    vb.s < lb.s + (lb.n - lb.s) * margin ||
-    vb.e > lb.e - (lb.e - lb.w) * margin ||
-    vb.w < lb.w + (lb.e - lb.w) * margin
+    vb.n > lb.n - bufLat * (1 - margin) ||
+    vb.s < lb.s + bufLat * (1 - margin) ||
+    vb.e > lb.e - bufLng * (1 - margin) ||
+    vb.w < lb.w + bufLng * (1 - margin)
   );
 }
 

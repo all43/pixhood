@@ -196,7 +196,7 @@ function broadcastRevertResult(result) {
     } else if (tile.action === 'deleted') {
       broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: tile.tileKey } }, tile.space);
     } else if (tile.action === 'child_reverted' && tile.parentData) {
-      broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: tile.parentData }, tile.space);
+      broadcastToViewport(tile.lat, tile.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...tile.parentData, hasChildren: false } }, tile.space);
     }
   }
 }
