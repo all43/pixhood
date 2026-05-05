@@ -56,7 +56,7 @@
     <p class="subtitle">Pixhood — pixhood.art</p>
 
     <h2>Overview</h2>
-    <p>Pixhood is an ephemeral collaborative pixel art map. We keep data processing to an absolute minimum. We do not collect, store, or sell personal data. There are no user accounts, no cookies, no tracking, and no third-party analytics.</p>
+    <p>Pixhood is an ephemeral collaborative pixel art map. We keep data processing to an absolute minimum. We do not collect, store, or sell personal data. There are no user accounts, no cookies, no tracking, and no third-party analytics. Users can also create Spaces — isolated painting environments with separate pixel data, accessible only via a shared link.</p>
 
     <h2>Controller</h2>
     <p>Responsible for this service:</p>
@@ -84,7 +84,10 @@
     <p>To load and display pixels, the app sends your current map viewport bounds (latitude/longitude rectangle) to the server via HTTP and WebSocket. When you paint a pixel, its color and map coordinates are also sent. These coordinates represent areas on a public map — not personal location data — and are inherently tied to the content you create. They are not used to track or profile you.</p>
 
     <h3>Painted Pixels</h3>
-    <p>Pixel colors and their map coordinates are stored server-side with a 24-hour expiry. After 24 hours they are automatically deleted. Pixels are public and visible to all users.</p>
+    <p>Pixel colors and their map coordinates are stored server-side. On the global canvas, pixels are visible to all users. In Spaces, pixels are only visible to people with the space link. By default, pixels are automatically deleted after 24 hours. In certain regions, pixel retention may be extended or indefinite (see Data Retention below).</p>
+
+    <h3>Spaces</h3>
+    <p>Spaces are isolated painting environments with their own pixel data, accessible only via a randomly generated link. Anyone with the link can paint — there are no accounts or membership lists. Space identifiers are random 12-character codes that do not contain personal data. Invalid or unknown links return the same response as an empty space, making it impossible to discover spaces without the link. No data is stored when a space is created; pixel data only appears on first paint.</p>
 
     <h2>Data We Do Not Collect</h2>
     <ul>
@@ -98,7 +101,9 @@
 
     <h2>Data Retention</h2>
     <ul>
-      <li><strong>Painted pixels</strong> — deleted after 24 hours (Redis TTL)</li>
+      <li><strong>Default pixels</strong> — deleted after 24 hours</li>
+      <li><strong>Protected region pixels</strong> — retained indefinitely</li>
+      <li><strong>Extended retention pixels</strong> — up to 30 days</li>
       <li><strong>Paint logs</strong> (for abuse detection) — deleted after 24 hours</li>
       <li><strong>Rate limit counters</strong> — expire after 1–60 minutes</li>
       <li><strong>Session blocks</strong> — expire after 1 hour</li>
@@ -119,7 +124,7 @@
     <h2>Changes</h2>
     <p>This policy may be updated. The latest version is always available at <a href="https://pixhood.art/privacy.html">pixhood.art/privacy.html</a>.</p>
 
-    <p>Last updated: April 2026</p>
+    <p>Last updated: May 2026</p>
 
     <a href="/" class="back">&larr; Back to Pixhood</a>
   </div>
