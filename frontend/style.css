@@ -15,6 +15,7 @@ html, body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
 }
 
 /* ── Top bar ── */
@@ -120,6 +121,15 @@ html, body {
   user-select: none;
 }
 
+@keyframes undo-pulse {
+  0% { background: #2a2a40; }
+  50% { background: rgba(255,255,255,0.3); }
+  100% { background: #2a2a40; }
+}
+.swatch-undo.undo-flash {
+  animation: undo-pulse 250ms ease;
+}
+
 .swatch-undo svg {
   width: 75%;
   height: 75%;
@@ -143,6 +153,23 @@ html, body {
 
 #map.no-paint {
   cursor: grab;
+}
+
+#map-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 500;
+}
+@keyframes map-flash-anim {
+  0% { opacity: 0; }
+  30% { opacity: 0.15; }
+  100% { opacity: 0; }
+}
+#map-flash.flash {
+  animation: map-flash-anim 200ms ease-out;
 }
 
 /* ── Pixel-art position pin ── */
@@ -578,12 +605,22 @@ html, body {
   color: #fff;
 }
 
-/* ── Toast notification ── */
-#toast {
+#toast-container {
   position: fixed;
   bottom: 24px;
   left: 50%;
-  transform: translateX(-50%) translateY(20px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  gap: 6px;
+  z-index: 2000;
+  pointer-events: none;
+  width: max-content;
+  max-width: min(92vw, 520px);
+}
+
+.toast-item {
   background: rgba(30,30,50,0.92);
   color: #fff;
   padding: 8px 18px;
@@ -592,20 +629,20 @@ html, body {
   letter-spacing: 0.5px;
   pointer-events: none;
   opacity: 0;
+  transform: translateY(20px);
   transition: opacity 0.3s ease, transform 0.3s ease;
-  z-index: 2000;
   white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-#toast.visible {
+.toast-item.visible {
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
+  transform: translateY(0);
 }
 
-#toast.has-action {
+.toast-item.has-action {
   pointer-events: auto;
   white-space: normal;
   max-width: min(92vw, 520px);
@@ -642,6 +679,13 @@ html, body {
 
 .toast-dismiss:hover {
   border-color: rgba(255,255,255,0.5);
+}
+
+.toast-item.toast-undo {
+  font-weight: 700;
+  font-size: 14px;
+  background: rgba(255,255,255,0.15);
+  border: 1px solid rgba(255,255,255,0.3);
 }
 
 /* ── Hamburger menu ── */
@@ -913,15 +957,12 @@ body.menu-open #menu-panel {
     font-size: 11px;
     padding: 8px 10px;
   }
-  #toast.has-action {
+  .toast-item.has-action {
     width: calc(100vw - 20px);
-    left: 10px;
-    right: 10px;
-    transform: translateY(20px);
     border-radius: 12px;
     justify-content: space-between;
   }
-  #toast.has-action.visible {
+  .toast-item.has-action.visible {
     transform: translateY(0);
   }
 }

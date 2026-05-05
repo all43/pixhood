@@ -1,9 +1,9 @@
 let selectedColor = CONFIG.DEFAULT_COLOR;
 let slowHintTimer = null;
 let _refreshTimer = null;
-let _toastTimer = null;
 let _undoCount = 0;
 let _undoTimer = null;
+let _undoToastItem = null;
 const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
 const PWA_STATE_KEY = 'pwa_install_state';
@@ -62,47 +62,87 @@ function initColorPicker() {
 
 function handleUndoTap() {
   _undoCount++;
+  const undoBtn = document.querySelector('.swatch-undo');
+  if (undoBtn) {
+    undoBtn.classList.remove('undo-flash');
+    void undoBtn.offsetWidth;
+    undoBtn.classList.add('undo-flash');
+    undoBtn.addEventListener('animationend', () => undoBtn.classList.remove('undo-flash'), { once: true });
+  }
+  if (!_undoToastItem) {
+    _undoToastItem = _createToastItem();
+    _undoToastItem.classList.add('toast-undo');
+  }
+  _undoToastItem.textContent = `Undo ${_undoCount}`;
   if (_undoTimer) clearTimeout(_undoTimer);
   _undoTimer = setTimeout(() => {
+    flashMap();
     sendUndoPaint(_undoCount);
+    _dismissToastItem(_undoToastItem);
+    _undoToastItem = null;
     _undoCount = 0;
     _undoTimer = null;
   }, CONFIG.UNDO_DEBOUNCE_MS);
 }
 
+function flashMap() {
+  const el = document.getElementById('map-flash');
+  if (!el) return;
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+}
+
+function _createToastItem() {
+  const container = document.getElementById('toast-container');
+  const item = document.createElement('div');
+  item.className = 'toast-item';
+  container.appendChild(item);
+  requestAnimationFrame(() => requestAnimationFrame(() => item.classList.add('visible')));
+  return item;
+}
+
 function showToast(msg) {
-  const toast = document.getElementById('toast');
-  if (_toastTimer) {
-    clearTimeout(_toastTimer);
-    _toastTimer = null;
+  const container = document.getElementById('toast-container');
+  const existing = Array.from(container.querySelectorAll('.toast-item')).find(
+    el => el.textContent === msg && !el.classList.contains('has-action')
+  );
+  if (existing) {
+    clearTimeout(existing._dismissTimer);
+    existing._dismissTimer = setTimeout(() => {
+      existing.classList.remove('visible');
+      setTimeout(() => existing.remove(), 300);
+    }, CONFIG.TOAST_DURATION);
+    return;
   }
-  toast.classList.remove('has-action');
-  toast.textContent = msg;
-  toast.classList.add('visible');
-  _toastTimer = setTimeout(() => {
-    toast.classList.remove('visible');
-    _toastTimer = null;
+  const item = _createToastItem();
+  item.textContent = msg;
+  item._dismissTimer = setTimeout(() => {
+    item.classList.remove('visible');
+    setTimeout(() => item.remove(), 300);
   }, CONFIG.TOAST_DURATION);
 }
 
 function hideToast() {
-  if (_toastTimer) {
-    clearTimeout(_toastTimer);
-    _toastTimer = null;
-  }
-  const toast = document.getElementById('toast');
-  toast.classList.remove('visible', 'has-action');
+  const container = document.getElementById('toast-container');
+  container.querySelectorAll('.toast-item').forEach(item => {
+    if (item._dismissTimer) clearTimeout(item._dismissTimer);
+    item.classList.remove('visible', 'has-action');
+    setTimeout(() => item.remove(), 300);
+  });
+}
+
+function _dismissToastItem(item) {
+  if (!item) return;
+  if (item._dismissTimer) clearTimeout(item._dismissTimer);
+  item.classList.remove('visible');
+  setTimeout(() => item.remove(), 300);
 }
 
 function showActionToast(msg, actionLabel, onAction, dismissLabel, onDismiss) {
-  const toast = document.getElementById('toast');
-  if (_toastTimer) {
-    clearTimeout(_toastTimer);
-    _toastTimer = null;
-  }
-
+  const toast = _createToastItem();
   toast.classList.add('has-action');
-  toast.textContent = '';
 
   const message = document.createElement('span');
   message.className = 'toast-message';
@@ -125,14 +165,14 @@ function showActionToast(msg, actionLabel, onAction, dismissLabel, onDismiss) {
   dismissBtn.type = 'button';
   dismissBtn.textContent = dismissLabel;
   dismissBtn.addEventListener('click', () => {
-    hideToast();
+    _dismissToastItem(toast);
     if (onDismiss) onDismiss();
   });
 
   toast.appendChild(message);
   toast.appendChild(actionBtn);
   toast.appendChild(dismissBtn);
-  toast.classList.add('visible');
+  return toast;
 }
 
 function readPWAState() {
@@ -757,6 +797,7 @@ async function initPWAInstallPrompt(map) {
   let listenersActive = false;
   let promptWindowOpen = false;
   let promptShownThisSession = false;
+  let pwaToastItem = null;
 
   const MSG_INSTALL_NATIVE = 'Install Pixhood for faster launch and fullscreen mode.';
   const MSG_INSTALL_IOS    = 'On iOS: tap Share, then "Add to Home Screen"';
@@ -794,7 +835,8 @@ async function initPWAInstallPrompt(map) {
     pwaState.installed = true;
     pwaState.nextEligibleAt = 0;
     writePWAState(pwaState);
-    hideToast();
+    _dismissToastItem(pwaToastItem);
+    pwaToastItem = null;
   }
 
   function detachInactivityListeners() {
@@ -846,7 +888,8 @@ async function initPWAInstallPrompt(map) {
           registerInstalled();
         } else {
           registerDismiss();
-          hideToast();
+          _dismissToastItem(pwaToastItem);
+          pwaToastItem = null;
         }
 
         cleanupSession();
@@ -862,7 +905,7 @@ async function initPWAInstallPrompt(map) {
     }
 
     hideLocationBanner();
-    showActionToast(message, actionLabel, onAction, 'Later', () => {
+    pwaToastItem = showActionToast(message, actionLabel, onAction, 'Later', () => {
       registerDismiss();
       cleanupSession();
     });
