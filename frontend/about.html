@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About — Pixhood</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html { height: 100%; }
+    body {
+      min-height: 100%;
+      font-family: 'Courier New', Courier, monospace;
+      background: #1a1a2e;
+      color: rgba(255,255,255,0.8);
+      padding: 2rem 1.5rem;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+    .container { max-width: 40rem; margin: 0 auto; }
+    h1 {
+      font-size: 1.5rem;
+      color: #e94560;
+      letter-spacing: 0.2rem;
+      margin-bottom: 0.25rem;
+    }
+    .subtitle {
+      color: rgba(255,255,255,0.4);
+      font-size: 0.8rem;
+      margin-bottom: 2rem;
+    }
+    h2 {
+      font-size: 1rem;
+      color: rgba(255,255,255,0.95);
+      margin-top: 2rem;
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.5px;
+    }
+    p, ul { margin-bottom: 0.75rem; }
+    ul { padding-left: 1.5rem; }
+    li { margin-bottom: 0.35rem; }
+    a { color: #e94560; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .author {
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+    .author p { margin-bottom: 0.35rem; }
+    .tech-list {
+      list-style: none;
+      padding-left: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin-bottom: 0.75rem;
+    }
+    .tech-list li {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 3px;
+      padding: 0.15rem 0.5rem;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.7);
+      margin-bottom: 0;
+    }
+    .build-date {
+      color: rgba(255,255,255,0.25);
+      font-size: 0.75rem;
+      margin-top: 2rem;
+    }
+    .back {
+      display: inline-block;
+      margin-top: 1.5rem;
+      color: rgba(255,255,255,0.45);
+      font-size: 0.85rem;
+    }
+    .back:hover { color: rgba(255,255,255,0.7); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>About</h1>
+    <p class="subtitle">Pixhood — pixhood.art</p>
+
+    <h2>The Idea</h2>
+    <p>Pixhood was inspired by Berlin's legal graffiti walls — spaces where anyone can create art, layered on top of each other, ever-changing. I wondered: what if we could have a similar thing in the digital world? An ephemeral collaborative canvas anchored to real locations, where pixels fade after 24 hours and no single person owns the result.</p>
+
+    <h2>How It Works</h2>
+    <p>Open the map, zoom in, pick a color, and paint. Every pixel is tied to real-world coordinates. Pixels disappear after 24 hours, making room for new art. Zoom in close enough and you get a 16&times;16 sub-grid for detailed work. It's collaborative — you'll see other people's pixels appear in real time as you watch the map.</p>
+
+    <h2>Built With</h2>
+    <ul class="tech-list">
+      <li>Vanilla JS</li>
+      <li>Leaflet.js</li>
+      <li>Node.js</li>
+      <li>Redis</li>
+      <li>WebSocket</li>
+      <li>Cloudflare Pages</li>
+      <li>Fly.io</li>
+      <li>PWA</li>
+    </ul>
+
+    <div class="author">
+      <p>Made by <a href="https://malikov.dev/" target="_blank" rel="noopener">Evgenii Malikov</a></p>
+    </div>
+
+    <p class="build-date">Build: {{BUILD_DATE}}</p>
+
+    <a href="/" class="back">&larr; Back to Pixhood</a>
+  </div>
+</body>
+</html>

@@ -106,6 +106,13 @@ fs.copyFileSync(
 );
 console.log('  privacy.html');
 
+// Copy about.html with BUILD_DATE replacement
+const buildDate = new Date().toISOString().slice(0, 10);
+let aboutHtml = fs.readFileSync(path.join(SRC_DIR, 'about.html'), 'utf8');
+aboutHtml = aboutHtml.replace('{{BUILD_DATE}}', buildDate);
+fs.writeFileSync(path.join(DIST_DIR, 'about.html'), aboutHtml);
+console.log('  about.html');
+
 // Copy public/ contents (icons, manifest, headers)
 if (fs.existsSync(PUBLIC_DIR)) {
   const publicFiles = fs.readdirSync(PUBLIC_DIR);

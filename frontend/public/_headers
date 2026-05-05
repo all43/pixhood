@@ -6,6 +6,12 @@
 /index.html
   Cache-Control: no-cache, no-store, must-revalidate
 
+/about.html
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/privacy.html
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
 

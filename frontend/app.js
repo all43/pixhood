@@ -617,6 +617,20 @@ function initMenu() {
   const joinGo = document.getElementById('menu-join-go');
   const joinBack = document.getElementById('menu-join-back');
   const installBtn = document.getElementById('menu-btn-install');
+  const welcomeBtn = document.getElementById('menu-btn-welcome');
+
+  welcomeBtn.addEventListener('click', () => {
+    closeMenu();
+    const loading = document.getElementById('loading');
+    const welcome = document.getElementById('welcome');
+    const spinner = document.getElementById('loading-spinner-screen');
+    loading.classList.remove('hidden');
+    welcome.classList.remove('hidden');
+    spinner.classList.add('hidden');
+    hideWelcomeError();
+    document.getElementById('welcome-space-buttons').classList.remove('hidden');
+    document.getElementById('join-space-form').classList.add('hidden');
+  });
 
   function openMenu() {
     document.body.classList.add('menu-open');
