@@ -1,7 +1,7 @@
 const ADMIN_TOKEN_KEY = 'admin_token';
-const SPACE_KEY_PREFIX = 'space_key:';
+
 let _adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
-let _spaceAdminKey = CONFIG.SPACE ? localStorage.getItem(SPACE_KEY_PREFIX + CONFIG.SPACE) : null;
+let _spaceAdminKey = CONFIG.SPACE ? localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE) : null;
 let _isAdminPanelOpen = false;
 let _inspectMode = false;
 let _activeRegionDraw = null;
@@ -201,7 +201,7 @@ async function adminFetch(path, options = {}) {
     if (panel) panel.remove();
     _isAdminPanelOpen = false;
     if (_spaceAdminKey) {
-      localStorage.removeItem(SPACE_KEY_PREFIX + CONFIG.SPACE);
+      localStorage.removeItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
       _spaceAdminKey = null;
       showToast('Admin key is invalid — it may have been revoked');
       return null;
@@ -304,6 +304,9 @@ function createAdminPanel() {
       <div id="admin-regions-list" class="admin-list"></div>
     </div>
     ${globalSections}
+    <div class="admin-section admin-section-footer">
+      <button class="admin-btn admin-btn-danger" id="admin-sign-out">Sign Out</button>
+    </div>
   `;
   document.body.appendChild(panel);
 
@@ -334,6 +337,20 @@ document.getElementById('admin-region-btn').addEventListener('click', () => {
 });
   const flaggedToggle = document.getElementById('admin-flagged-toggle');
   if (flaggedToggle) flaggedToggle.addEventListener('click', toggleFlaggedSection);
+  document.getElementById('admin-sign-out').addEventListener('click', () => {
+    sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    _adminToken = null;
+    if (CONFIG.SPACE && CONFIG.SPACE_KEY_PREFIX) {
+      localStorage.removeItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
+      _spaceAdminKey = null;
+      const manageBtn = document.getElementById('menu-btn-manage-space');
+      if (manageBtn) manageBtn.classList.add('hidden');
+    }
+    panel.remove();
+    _isAdminPanelOpen = false;
+    disableInspectMode();
+    if (_activeRegionDraw) deactivateRegionMode();
+  });
 }
 
 function toggleFlaggedSection() {
@@ -672,8 +689,9 @@ function onInspectClick(e) {
 
   const vb = getViewportBounds();
   const fb = computeFetchBounds(vb);
-  fetch(`${CONFIG.API_URL}/pixels?n=${fb.n}&s=${fb.s}&e=${fb.e}&w=${fb.w}`)
-    .then(r => r.json())
+  const spaceParam = CONFIG.SPACE ? `&space=${CONFIG.SPACE}` : '';
+  fetch(`${CONFIG.API_URL}/pixels?n=${fb.n}&s=${fb.s}&e=${fb.e}&w=${fb.w}${spaceParam}`)
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
     .then(async pixels => {
       const pixel = pixels.find(p => p.id === id);
       if (!pixel) {
@@ -705,7 +723,7 @@ function onInspectClick(e) {
         ${regionInfo}
         ${pixel.ttlExtended ? `<div class="admin-pixel-popup-row admin-ttl-badge">TTL extended until ${new Date(pixel.ttlExpiresAt).toLocaleDateString()}</div>` : ''}
         <div class="admin-pixel-popup-row">
-          Session: <span class="admin-pixel-popup-session" data-session="${escapeHtml(pixel.sessionId || 'unknown')}">${escapeHtml(pixel.sessionId || 'unknown')}</span>
+          Session: <span class="${_spaceAdminKey ? '' : 'admin-pixel-popup-session'}" ${!_spaceAdminKey && pixel.sessionId ? `data-session="${escapeHtml(pixel.sessionId)}"` : ''}>${escapeHtml(pixel.sessionId || 'unknown')}</span>
         </div>
         <div class="admin-pixel-popup-row">
           Painted: ${pixel.paintedAt ? relativeTime(new Date(pixel.paintedAt).getTime()) : 'unknown'}
@@ -714,7 +732,8 @@ function onInspectClick(e) {
           Children: ${pixel.children ? pixel.children.length : 0}
         </div>
       `;
-      el.querySelector('[data-session]').addEventListener('click', () => {
+      const sessionEl = el.querySelector('[data-session]');
+      if (sessionEl) sessionEl.addEventListener('click', () => {
         const input = document.getElementById('admin-session-input');
         if (input && pixel.sessionId) {
           input.value = pixel.sessionId;
@@ -818,7 +837,7 @@ function openSpaceAdminPanel() {
     _isAdminPanelOpen = false;
     return;
   }
-  _spaceAdminKey = localStorage.getItem(SPACE_KEY_PREFIX + CONFIG.SPACE);
+  _spaceAdminKey = localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
   if (!_spaceAdminKey) {
     if (typeof showToast === 'function') showToast('Admin key not found for this space');
     return;

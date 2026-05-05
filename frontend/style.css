@@ -852,11 +852,14 @@ body.menu-open #menu-panel {
 }
 
 #menu-btn-leave-space {
-  color: rgba(255,255,255,0.35);
+  color: #e94560;
+  border-color: rgba(233, 69, 96, 0.3);
 }
 
 #menu-btn-leave-space:hover {
-  color: #e94560;
+  color: #fff;
+  background: rgba(233, 69, 96, 0.15);
+  border-color: rgba(233, 69, 96, 0.5);
 }
 
 #menu-btn-manage-space {

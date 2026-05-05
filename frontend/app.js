@@ -8,7 +8,7 @@ const _paintLog = [];
 const MAX_PAINT_LOG = 20;
 const LAST_GEO_KEY = 'last_geo';
 const GEO_MAX_AGE_MS = 5 * 60 * 1000;
-const SPACE_KEY_PREFIX = 'space_key:';
+
 const PWA_STATE_KEY = 'pwa_install_state';
 const PWA_RETRY_MS = [3, 14, 60].map(days => days * 24 * 60 * 60 * 1000);
 const _isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
@@ -18,11 +18,11 @@ const _isMacSafari = /Macintosh/.test(navigator.userAgent) &&
 let _pwaDeferredEvent = null;
 
 function getStoredSpaceKey(slug) {
-  return localStorage.getItem(SPACE_KEY_PREFIX + slug);
+  return localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + slug);
 }
 
 function storeSpaceKey(slug, key) {
-  localStorage.setItem(SPACE_KEY_PREFIX + slug, key);
+  localStorage.setItem(CONFIG.SPACE_KEY_PREFIX + slug, key);
 }
 
 function showSpaceKeyModal(slug, key) {
@@ -712,6 +712,12 @@ function initSpaceIndicator() {
       } else {
         loadAdmin();
       }
+    });
+  }
+  const leaveBtn = document.getElementById('menu-btn-leave-space');
+  if (leaveBtn) {
+    leaveBtn.addEventListener('click', () => {
+      location.href = '/';
     });
   }
 }

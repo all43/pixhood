@@ -73,6 +73,17 @@
   border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
+.admin-section-footer {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  text-align: center;
+}
+
+.admin-section-footer .admin-btn-danger {
+  width: 100%;
+}
+
 .admin-section h3 {
   font-size: 12px;
   text-transform: uppercase;

@@ -81,6 +81,7 @@ const CONFIG = {
   WS_TYPE_REGIONS_CHANGED: 'protectedRegionsChanged',
 
   ERASE_COLOR: '__erase__',
+  SPACE_KEY_PREFIX: 'space_key:',
 
   PROTECTED_BORDER_COLOR: 'rgba(160,140,100,0.35)',
   PROTECTED_BORDER_WEIGHT: 1,
