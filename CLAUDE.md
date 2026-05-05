@@ -175,6 +175,7 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 | `space:<slug>:pixel:<tileKey>` | String | 24h | Parent pixel JSON (space-scoped) |
 | `space:<slug>:subpixels:<tileKey>` | Hash | 24h | Child pixels (space-scoped) |
 | `space:<slug>:pixels:geo` | Sorted Set | — | Viewport geo index (space-scoped) |
+| `protected_tiles` | Set | — | Protected tile keys (global). Per-space: `space:<slug>:protected_tiles` |
 | `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with `type` (`parent`/`child`/`erase`), `space` field + previous state for revert |
 | `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (global reads) |
 | `space:ratelimit:write:<ip>:<space>` | String | 1 min | Per-space IP write rate limit |
@@ -185,7 +186,7 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 
 Stale geo entries (pixel key expired) cleaned lazily on each viewport query.
 
-Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` — but does NOT reset the parent key TTL. Writing a parent or child pixel resets both parent and subpixels TTL to 24h.
+Reading subpixels (`getSubpixels`) resets the subpixels hash TTL — but does NOT reset the parent key TTL. Writing a parent or child pixel resets both parent and subpixels TTL to 24h. Protected pixels have no TTL (PERSIST). Extended-TTL pixels have 30-day TTL on both parent and subpixels. `getSubpixelsMulti` uses a two-pipeline approach: HGETALL + TTL check per parent, then conditional EXPIRE per subpixels hash based on parent TTL status (-1 = protected → PERSIST, >24h = extended → use parent's remaining TTL, ≤24h = default).
 
 ## API
 
@@ -202,6 +203,10 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL via `EXPIRE` �
 | `GET` | `/admin/flagged` | List flagged sessions (requires auth) |
 | `POST` | `/admin/revert` | Revert all paints by a session (requires auth) |
 | `DELETE` | `/admin/region?n=&s=&e=&w=&space=` | Erase all pixels in bounding box (requires auth). Optional `space` param. Broadcasts deletions. |
+| `POST` | `/admin/protect` | Protect pixels in a region — sets `protected: true`, PERSISTs key+subpixels, adds to `protected_tiles` set. Body: `{ n, s, e, w, space? }`. Returns `{ ok, protected, pixels }`. Broadcasts updated pixels to viewport. |
+| `POST` | `/admin/unprotect` | Unprotect pixels by tile keys or region. Body: `{ tileKeys: [...], space? }` or `{ n, s, e, w, space? }`. Returns `{ ok, unprotected }`. Broadcasts updated pixels to viewport. |
+| `POST` | `/admin/extend-ttl` | Extend pixel TTL to 30 days in a region. Body: `{ n, s, e, w, space? }`. Returns `{ ok, extended }`. |
+| `GET` | `/admin/protected?space=` | List protected tile keys with pixel data. Optional `space` param. |
 | `WS` | WebSocket connection | Real-time updates, painting, ping/pong, viewport subscription |
 
 ### WebSocket protocol
@@ -218,7 +223,7 @@ Connection: `wss://api.pixhood.art` (max 10 concurrent connections per IP). Orig
 - `{ type: "pong" }` — heartbeat response
 - `{ type: "session", sessionId }` — server-assigned session ID, sent when client has no valid session
 - `{ type: "paintAck", id }` — paint/erase/undo acknowledged (sent to painting client only)
-- `{ type: "paintError", id, reason, retryAfter? }` — paint/erase/undo rejected (`rate_limited`, `blocked`, `invalid_input`, `no_session`, `no_viewport`, `server_error`)
+- `{ type: "paintError", id, reason, retryAfter? }` — paint/erase/undo rejected (`rate_limited`, `blocked`, `invalid_input`, `no_session`, `no_viewport`, `server_error`, `protected`)
 - `{ type: "blocked" }` — session auto-reverted (sent to painting client only)
 - `{ type: "undoResult", id, count }` — undo completed, confirms how many paint log entries were processed (sent to requesting client only)
 
@@ -277,6 +282,10 @@ Permission flow:
 - **Viewport-aware debounced undo**: Undo tile batches taps within 500ms window into a single `undoPaint` message with `count: N`. Client-side paint log (max 20 entries) tracks recent paints with lat/lng. Only consecutive paints from the tail within the current viewport count toward undo. Button disabled when 0 viewport paints. Button flashes on tap, count toast during debounce, screen flashes white on undo fire. Server pops N entries from paint log and restores tiles atomically. Guarded by `revertingSessions` in-memory set to prevent concurrent undo.
 - **Erase broadcasts**: Server sends `clearChildren` before `deletePixel` so clients remove child renders first.
 - **No build step**: prototype stays simple, `node index.js` and open browser.
+- **Protection via pixel JSON**: `protected: true` field checked in paint handlers (already fetched via `getPixelRaw`, zero extra Redis calls). Redis Set `protected_tiles` used only for admin listing, not runtime checks.
+- **TTL as enforcement**: Both protection and TTL extension use Redis TTL as the enforcement mechanism. Protected pixels have TTL -1 (PERSIST). Extended pixels have TTL > 24h (30 days). `getSubpixelsMulti` checks parent TTL to determine correct subpixels EXPIRE duration.
+- **Neighbor-aware gold borders**: Protected pixels render gold polylines only on edges adjacent to non-protected pixels (4-direction neighbor check via `protectedSet`). This creates clean outlines around protected regions instead of per-pixel boxes.
+- **Region mode reuse**: All three admin region operations (erase, protect, extend TTL) share a single generic `REGION_MODES` config and `activateRegionMode()`/`deactivateRegionMode()` functions, eliminating duplicated drawing/event code.
 
 ## Implementation notes
 
@@ -324,6 +333,9 @@ Before any rate limit or suspicion check, paints (including erase and undo) are 
 - No session ID (`reason: "no_session"`)
 - No viewport subscribed yet (`reason: "no_viewport"`) — forces bots to send viewport, making `outside_viewport` and `implausible_viewport` checks meaningful
 - Session is blocked (`reason: "blocked"`)
+- Pixel is protected (`reason: "protected"`) — protected pixels cannot be painted, erased, or have children added
+
+Additionally, `revertSession` and `undoLastPaints` skip protected tiles (do not overwrite them). `deletePixelsInRegion` also skips protected pixels and returns a `skipped` count.
 
 ### Auto-revert
 
@@ -367,13 +379,52 @@ All `/admin/*` endpoints and HTTP paint endpoints (`POST /pixels`, `POST /pixels
 Activated via URL hash `#admin`. `admin.js` and `admin.css` are loaded dynamically (not fetched by regular users). Token stored in `sessionStorage` (cleared on tab close).
 
 **Tools:**
-- **Inspect mode**: Click any pixel to see its session ID, color, and paint time. Session ID links to the inspector. Mutually exclusive with region erase mode.
-- **Region erase**: Draw rectangle on map, confirm, deletes all pixels in bounds via `DELETE /admin/region`. Broadcasts `deletePixel` for each.
+- **Inspect mode**: Click any pixel to see its session ID, color, paint time, protection status (Protected/TTL extended), and children count. Session ID links to the inspector. Protected pixels show an "Unprotect" button. Mutually exclusive with region modes.
+- **Protect Region**: Draw rectangle on map, confirm, marks all pixels in region as protected (permanent, no TTL, cannot be painted over). Gold dashed selection rectangle. Uses `POST /admin/protect`.
+- **Extend TTL**: Draw rectangle on map, confirm, extends pixel TTL to 30 days in region. Blue dashed selection rectangle. Uses `POST /admin/extend-ttl`.
+- **Region erase**: Draw rectangle on map, confirm, deletes all non-protected pixels in bounds via `DELETE /admin/region`. Red dashed selection rectangle. Broadcasts `deletePixel` for each. Skips protected pixels.
 - **Sessions list**: "Load Active Sessions" button triggers `SCAN paintlog:*` in Redis. Shows paint count, relative time, locate button (pans map to last paint location at zoom 20).
 - **Session inspector**: Enter or click a session ID to view paint log with click-to-pan. "Revert All Paints" button calls `POST /admin/revert`.
 - **Flagged sessions**: Collapsible section, shows sessions flagged for suspicious activity with one-click revert.
 
 No IP addresses shown anywhere in the admin UI.
+
+## Protection and TTL extension
+
+### Protected pixels
+
+Admin-protected pixels that cannot be painted over, erased, or have children added. Used for preserving art or preventing vandalism in sensitive areas.
+
+**Data model**: `protected: true` field in pixel JSON (authoritative for checks). `protected_tiles` Redis Set per-space (`space:<slug>:protected_tiles`) for admin listing. Pixel key is `PERSIST`ed (no TTL, permanent). Subpixels hash is also `PERSIST`ed.
+
+**Paint rejection**: `handlePaintParent`, `handlePaintChild`, and `handlePaintErase` check `prevPixel.protected` after fetching `getPixelRaw`. Zero extra Redis calls for parent/erase (pixel already fetched); one extra `getPixelRaw` call for child paints. Rejected with `paintError { reason: 'protected' }`.
+
+**Frontend rendering**: Protected pixels display a gold border (`#FFD700`, weight 2px) using `L.polyline` edge segments. Only outer edges are drawn — if a protected pixel's neighbor is also protected, the shared interior edge is skipped. `protectedSet` (JS `Set`) tracks which tile keys are protected. `renderProtectedBorders()` checks 4 neighbors for each protected pixel and draws edge polylines for non-protected sides. Borders are visible at zoom ≥ 16 only. Toast "This pixel is protected" shown on rejected paint attempts.
+
+**Subpixels**: `getSubpixelsMulti` uses a two-pipeline approach — HGETALL + TTL per parent, then conditional EXPIRE: protected parents (TTL -1) → PERSIST subpixels; extended parents (TTL > 24h) → use parent's remaining TTL; default → 24h EXPIRE.
+
+**Admin operations**:
+- `POST /admin/protect` — region protect: finds all pixels in bounds, adds `protected: true`, PERSISTs keys + subpixels, adds to `protected_tiles` set. Broadcasts updated pixels to viewport.
+- `POST /admin/unprotect` — removes `protected` field, sets 24h EXPIRE, removes from set. Broadcasts updated pixels. Available in inspect popup per-pixel and as region operation.
+- `GET /admin/protected` — lists all protected tiles. Cleans stale entries (removes set members where pixel key missing or `protected` field absent).
+
+**Skip protection**: `revertSession`, `undoLastPaints`, and `deletePixelsInRegion` skip protected pixels (check `currentPixel.protected` before restoring).
+
+### TTL extension
+
+Extends pixel TTL from 24h to 30 days (`TTL_EXTENDED = 2592000`). Not protected — painting over resets to default 24h TTL. Cannot be cancelled (expires naturally or painted over).
+
+**Data model**: `ttlExtended: true` and `ttlExpiresAt` (ISO timestamp) fields in pixel JSON. Parent and subpixels keys get 30-day EXPIRE. Since `savePixel` and `saveChildPixel` always set 24h TTL, painting over naturally cancels the extension — no special handling needed in paint handlers.
+
+**Frontend rendering**: Subtle blue border (`rgba(100,150,255,0.4)`, weight 1px) visible only when admin panel is open. Checked via `document.getElementById('admin-panel')`.
+
+**Admin operations**:
+- `POST /admin/extend-ttl` — region extend: finds all pixels in bounds, adds `ttlExtended` + `ttlExpiresAt`, EXPIREs to 30 days. No viewport broadcast needed.
+- No un-extend operation — expires naturally or painted over.
+
+### Admin UI region modes
+
+All three region operations (erase, protect, extend TTL) share a single `REGION_MODES` config object and generic `activateRegionMode(key)` / `deactivateRegionMode()` functions. Each mode defines its own rectangle style, confirm text, API endpoint, and result formatter. The shared handlers (`onRegionDrawStart/Move/End`) handle rectangle drawing, dimension display, and confirmation.
 
 ## Out of scope (prototype)
 

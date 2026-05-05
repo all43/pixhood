@@ -244,6 +244,10 @@ async function handlePaintParent(ws, msg) {
 
   const prevRaw = await redis.getPixelRaw(pixel.id, space);
   const prevPixel = prevRaw ? safeParse(prevRaw) : null;
+  if (prevPixel && prevPixel.protected) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'protected' }));
+    return;
+  }
   const prevChildrenRaw = await redis.getSubpixelsAll(pixel.id, space);
   const prevChildren = Object.keys(prevChildrenRaw).length > 0
     ? Object.values(prevChildrenRaw).map(v => safeParse(v)).filter(Boolean)
@@ -342,6 +346,14 @@ async function handlePaintChild(ws, msg) {
 
   const { parentId, tileKey, lat, lng, color } = msg;
   const childKey = tileKey;
+
+  const parentRaw = await redis.getPixelRaw(parentId, space);
+  const parentPixel = parentRaw ? safeParse(parentRaw) : null;
+  if (parentPixel && parentPixel.protected) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'protected' }));
+    return;
+  }
+
   const childPixel = {
     id: tileKey,
     parentId,
@@ -453,6 +465,10 @@ async function handlePaintErase(ws, msg) {
 
   const prevRaw = await redis.getPixelRaw(tileKey, space);
   const prevPixel = prevRaw ? safeParse(prevRaw) : null;
+  if (prevPixel && prevPixel.protected) {
+    ws.send(JSON.stringify({ type: CONSTANTS.WS_TYPE_PAINT_ERROR, id: msg.id, reason: 'protected' }));
+    return;
+  }
   const prevChildrenRaw = await redis.getSubpixelsAll(tileKey, space);
   const prevChildren = Object.keys(prevChildrenRaw).length > 0
     ? Object.values(prevChildrenRaw).map(v => safeParse(v)).filter(Boolean)
@@ -817,15 +833,165 @@ async function handleRequest(req, res) {
         return;
       }
       const space = parseSpaceParam(url);
-      const deleted = await redis.deletePixelsInRegion(n, s, e, w, space);
-      for (const pixel of deleted) {
+      const result = await redis.deletePixelsInRegion(n, s, e, w, space);
+      for (const pixel of result.deleted) {
         broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_DELETE_PIXEL, data: { id: pixel.id } }, space);
         broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_CLEAR_CHILDREN, data: { parentId: pixel.id } }, space);
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, deleted: deleted.length }));
+      res.end(JSON.stringify({ ok: true, deleted: result.deleted.length, skipped: result.skipped.length }));
     } catch (err) {
       console.error('DELETE /admin/region error:', err);
+      sendError(res, 500, 'Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/protect') {
+    setCORS(res);
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const data = JSON.parse(body);
+      const space = data.space || null;
+      const n = parseFloat(data.n);
+      const s = parseFloat(data.s);
+      const e = parseFloat(data.e);
+      const w = parseFloat(data.w);
+
+      if (isNaN(n) || isNaN(s) || isNaN(e) || isNaN(w)) {
+        sendError(res, 400, 'Missing bounds params: n, s, e, w');
+        return;
+      }
+
+      const { pixels } = await redis.getPixelsInViewport(n, s, e, w, space);
+      const tileKeys = pixels.map(p => p.id);
+      const protectedCount = await redis.protectPixels(tileKeys, space);
+
+      const updatedPixels = [];
+      for (const pixel of pixels) {
+        const raw = await redis.getPixelRaw(pixel.id, space);
+        if (raw) {
+          const updated = safeParse(raw);
+          if (updated && updated.protected) {
+            broadcastToViewport(updated.lat, updated.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...updated, hasChildren: false } }, space);
+            updatedPixels.push(updated);
+          }
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, protected: protectedCount, pixels: updatedPixels }));
+    } catch (err) {
+      if (err.message === 'Body too large') { sendTooLarge(res); return; }
+      console.error('POST /admin/protect error:', err);
+      sendError(res, 500, 'Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/unprotect') {
+    setCORS(res);
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const data = JSON.parse(body);
+      const space = data.space || null;
+
+      let tileKeys;
+      if (data.tileKeys && Array.isArray(data.tileKeys)) {
+        tileKeys = data.tileKeys;
+      } else if (!isNaN(parseFloat(data.n)) && !isNaN(parseFloat(data.s)) && !isNaN(parseFloat(data.e)) && !isNaN(parseFloat(data.w))) {
+        const { pixels } = await redis.getPixelsInViewport(parseFloat(data.n), parseFloat(data.s), parseFloat(data.e), parseFloat(data.w), space);
+        tileKeys = pixels.map(p => p.id);
+      } else {
+        sendError(res, 400, 'Missing tileKeys or bounds');
+        return;
+      }
+
+      const unprotected = await redis.unprotectPixels(tileKeys, space);
+
+      for (const tileKey of tileKeys) {
+        const raw = await redis.getPixelRaw(tileKey, space);
+        if (raw) {
+          const pixel = safeParse(raw);
+          if (pixel) {
+            broadcastToViewport(pixel.lat, pixel.lng, { type: CONSTANTS.WS_TYPE_PIXEL, data: { ...pixel, hasChildren: false } }, space);
+          }
+        }
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, unprotected }));
+    } catch (err) {
+      if (err.message === 'Body too large') { sendTooLarge(res); return; }
+      console.error('POST /admin/unprotect error:', err);
+      sendError(res, 500, 'Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/admin/extend-ttl') {
+    setCORS(res);
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const data = JSON.parse(body);
+      const space = data.space || null;
+      const n = parseFloat(data.n);
+      const s = parseFloat(data.s);
+      const e = parseFloat(data.e);
+      const w = parseFloat(data.w);
+
+      if (isNaN(n) || isNaN(s) || isNaN(e) || isNaN(w)) {
+        sendError(res, 400, 'Missing bounds params: n, s, e, w');
+        return;
+      }
+
+      const { pixels } = await redis.getPixelsInViewport(n, s, e, w, space);
+      const tileKeys = pixels.map(p => p.id);
+      const extended = await redis.extendTtlPixels(tileKeys, space);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, extended }));
+    } catch (err) {
+      if (err.message === 'Body too large') { sendTooLarge(res); return; }
+      console.error('POST /admin/extend-ttl error:', err);
+      sendError(res, 500, 'Internal server error');
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/admin/protected') {
+    setCORS(res);
+    const auth = await checkAdminAuth(req);
+    if (!auth.ok) {
+      res.writeHead(auth.locked ? 429 : 401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(auth.locked ? { error: 'Locked', retryAfter: auth.retryAfter } : { error: 'Unauthorized' }));
+      return;
+    }
+    try {
+      const space = parseSpaceParam(url);
+      const tiles = await redis.getProtectedTiles(space);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ tiles }));
+    } catch (err) {
+      console.error('GET /admin/protected error:', err);
       sendError(res, 500, 'Internal server error');
     }
     return;

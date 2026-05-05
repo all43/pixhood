@@ -1,9 +1,173 @@
 const ADMIN_TOKEN_KEY = 'admin_token';
 let _adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
-let _regionMode = false;
-let _regionRect = null;
-let _regionStart = null;
 let _inspectMode = false;
+let _activeRegionDraw = null;
+
+const REGION_MODES = {
+  erase: {
+    btnId: 'admin-region-btn',
+    infoId: 'admin-region-info',
+    defaultLabel: 'Erase Region',
+    activeLabel: 'Cancel Selection',
+    hint: 'Click and drag on the map to select a region',
+    rectStyle: { color: '#e94560', fillColor: '#e94560', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
+    confirmText: 'Erase all pixels in this region?',
+    loadingText: 'Erasing...',
+    failText: 'Erase failed',
+    async makeRequest(n, s, e, w) {
+      const res = await adminFetch(`/admin/region?n=${n}&s=${s}&e=${e}&w=${w}`, { method: 'DELETE' });
+      return res;
+    },
+    formatResult(data) { return `Erased ${data.deleted} pixels`; }
+  },
+  protect: {
+    btnId: 'admin-protect-btn',
+    infoId: 'admin-protect-info',
+    defaultLabel: 'Protect Region',
+    activeLabel: 'Cancel',
+    hint: 'Click and drag on the map to select a region to protect',
+    rectStyle: { color: '#FFD700', fillColor: '#FFD700', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
+    confirmText: 'Protect all pixels in this region?',
+    loadingText: 'Protecting...',
+    failText: 'Protect failed',
+    async makeRequest(n, s, e, w) {
+      const body = { n, s, e, w };
+      if (CONFIG.SPACE) body.space = CONFIG.SPACE;
+      return await adminFetch('/admin/protect', { method: 'POST', body: JSON.stringify(body) });
+    },
+    formatResult(data) { return `Protected ${data.protected} pixels`; }
+  },
+  extend: {
+    btnId: 'admin-extend-ttl-btn',
+    infoId: 'admin-extend-ttl-info',
+    defaultLabel: 'Extend TTL',
+    activeLabel: 'Cancel',
+    hint: 'Click and drag on the map to select a region to extend TTL (30 days)',
+    rectStyle: { color: 'rgba(100,150,255,0.8)', fillColor: 'rgba(100,150,255,0.15)', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
+    confirmText: 'Extend TTL to 30 days for all pixels in this region?',
+    loadingText: 'Extending TTL...',
+    failText: 'Extend TTL failed',
+    async makeRequest(n, s, e, w) {
+      const body = { n, s, e, w };
+      if (CONFIG.SPACE) body.space = CONFIG.SPACE;
+      return await adminFetch('/admin/extend-ttl', { method: 'POST', body: JSON.stringify(body) });
+    },
+    formatResult(data) { return `Extended ${data.extended} pixels`; }
+  }
+};
+
+let _regionDrawStart = null;
+let _regionDrawRect = null;
+
+function activateRegionMode(modeKey) {
+  if (_activeRegionDraw) deactivateRegionMode();
+  if (_inspectMode) disableInspectMode();
+
+  const mode = REGION_MODES[modeKey];
+  _activeRegionDraw = modeKey;
+
+  const btn = document.getElementById(mode.btnId);
+  const info = document.getElementById(mode.infoId);
+  btn.textContent = mode.activeLabel;
+  btn.classList.add('active');
+  info.textContent = mode.hint;
+
+  const mapEl = document.getElementById('map');
+  mapEl.classList.add('region-select-mode');
+
+  if (typeof map !== 'undefined') {
+    map.dragging.disable();
+    map.getContainer().addEventListener('mousedown', onRegionDrawStart);
+    map.getContainer().addEventListener('mousemove', onRegionDrawMove);
+    map.getContainer().addEventListener('mouseup', onRegionDrawEnd);
+  }
+}
+
+function deactivateRegionMode() {
+  if (!_activeRegionDraw) return;
+  const mode = REGION_MODES[_activeRegionDraw];
+  _activeRegionDraw = null;
+
+  const btn = document.getElementById(mode.btnId);
+  const info = document.getElementById(mode.infoId);
+  btn.textContent = mode.defaultLabel;
+  btn.classList.remove('active');
+  info.textContent = '';
+
+  const mapEl = document.getElementById('map');
+  mapEl.classList.remove('region-select-mode');
+
+  if (typeof map !== 'undefined') {
+    map.dragging.enable();
+    map.getContainer().removeEventListener('mousedown', onRegionDrawStart);
+    map.getContainer().removeEventListener('mousemove', onRegionDrawMove);
+    map.getContainer().removeEventListener('mouseup', onRegionDrawEnd);
+  }
+
+  if (_regionDrawRect) {
+    map.removeLayer(_regionDrawRect);
+    _regionDrawRect = null;
+  }
+}
+
+function onRegionDrawStart(e) {
+  if (!_activeRegionDraw || typeof map === 'undefined') return;
+  _regionDrawStart = map.mouseEventToLatLng(e);
+  if (_regionDrawRect) {
+    map.removeLayer(_regionDrawRect);
+    _regionDrawRect = null;
+  }
+}
+
+function onRegionDrawMove(e) {
+  if (!_activeRegionDraw || !_regionDrawStart || typeof map === 'undefined') return;
+  const end = map.mouseEventToLatLng(e);
+  const bounds = L.latLngBounds(_regionDrawStart, end);
+  const mode = REGION_MODES[_activeRegionDraw];
+  if (_regionDrawRect) {
+    _regionDrawRect.setBounds(bounds);
+  } else {
+    _regionDrawRect = L.rectangle(bounds, mode.rectStyle).addTo(map);
+  }
+}
+
+async function onRegionDrawEnd(e) {
+  if (!_activeRegionDraw || !_regionDrawStart || typeof map === 'undefined') return;
+  const mode = REGION_MODES[_activeRegionDraw];
+  const end = map.mouseEventToLatLng(e);
+  const bounds = L.latLngBounds(_regionDrawStart, end);
+  _regionDrawStart = null;
+
+  const n = bounds.getNorth();
+  const s = bounds.getSouth();
+  const eLng = bounds.getEast();
+  const w = bounds.getWest();
+
+  const info = document.getElementById(mode.infoId);
+  info.textContent = `Selected: ${((n - s) * 111).toFixed(0)}m × ${(((eLng - w) * 111 * Math.cos((n + s) / 2 * Math.PI / 180))).toFixed(0)}m`;
+
+  if (!confirm(mode.confirmText)) {
+    info.textContent = 'Cancelled';
+    return;
+  }
+
+  info.textContent = mode.loadingText;
+
+  try {
+    const res = await mode.makeRequest(n, s, eLng, w);
+    if (res && res.ok) {
+      const data = await res.json();
+      info.textContent = mode.formatResult(data);
+      if (typeof refreshViewport === 'function') refreshViewport();
+    } else {
+      info.textContent = mode.failText;
+    }
+  } catch {
+    info.textContent = mode.failText;
+  }
+
+  deactivateRegionMode();
+}
 
 function escapeHtml(str) {
   return String(str)
@@ -84,9 +248,13 @@ function createAdminPanel() {
       <h3>Tools</h3>
       <div class="admin-tools">
         <button class="admin-btn" id="admin-inspect-btn">Inspect Pixels</button>
+        <button class="admin-btn admin-btn-protect" id="admin-protect-btn">Protect Region</button>
+        <button class="admin-btn admin-btn-extend" id="admin-extend-ttl-btn">Extend TTL</button>
         <button class="admin-btn admin-btn-danger" id="admin-region-btn">Erase Region</button>
       </div>
       <div id="admin-inspect-info" class="admin-mode-info"></div>
+      <div id="admin-protect-info" class="admin-mode-info"></div>
+      <div id="admin-extend-ttl-info" class="admin-mode-info"></div>
       <div id="admin-region-info" class="admin-mode-info"></div>
     </div>
     <div class="admin-section">
@@ -110,13 +278,24 @@ function createAdminPanel() {
   document.getElementById('admin-close').addEventListener('click', () => {
     panel.remove();
     disableInspectMode();
-    if (_regionMode) toggleRegionMode();
+    if (_activeRegionDraw) deactivateRegionMode();
   });
 
   document.getElementById('admin-load-sessions').addEventListener('click', loadSessions);
   document.getElementById('admin-lookup').addEventListener('click', lookupSession);
   document.getElementById('admin-inspect-btn').addEventListener('click', toggleInspectMode);
-  document.getElementById('admin-region-btn').addEventListener('click', toggleRegionMode);
+document.getElementById('admin-protect-btn').addEventListener('click', () => {
+  if (_activeRegionDraw === 'protect') deactivateRegionMode();
+  else activateRegionMode('protect');
+});
+document.getElementById('admin-extend-ttl-btn').addEventListener('click', () => {
+  if (_activeRegionDraw === 'extend') deactivateRegionMode();
+  else activateRegionMode('extend');
+});
+document.getElementById('admin-region-btn').addEventListener('click', () => {
+  if (_activeRegionDraw === 'erase') deactivateRegionMode();
+  else activateRegionMode('erase');
+});
   document.getElementById('admin-flagged-toggle').addEventListener('click', toggleFlaggedSection);
 }
 
@@ -316,7 +495,7 @@ function toggleInspectMode() {
   const mapEl = document.getElementById('map');
 
   if (_inspectMode) {
-    if (_regionMode) toggleRegionMode();
+    if (_activeRegionDraw) deactivateRegionMode();
     btn.textContent = 'Exit Inspect';
     btn.classList.add('active');
     info.textContent = 'Click a pixel to see who painted it';
@@ -382,6 +561,8 @@ function onInspectClick(e) {
           <span class="admin-paint-color" style="background:${safeColor(pixel.color)}"></span>
           <strong>${escapeHtml(pixel.id)}</strong>
         </div>
+        ${pixel.protected ? '<div class="admin-pixel-popup-row admin-protected-badge">Protected</div>' : ''}
+        ${pixel.ttlExtended ? `<div class="admin-pixel-popup-row admin-ttl-badge">TTL extended until ${new Date(pixel.ttlExpiresAt).toLocaleDateString()}</div>` : ''}
         <div class="admin-pixel-popup-row">
           Session: <span class="admin-pixel-popup-session" data-session="${escapeHtml(pixel.sessionId || 'unknown')}">${escapeHtml(pixel.sessionId || 'unknown')}</span>
         </div>
@@ -391,6 +572,7 @@ function onInspectClick(e) {
         <div class="admin-pixel-popup-row">
           Children: ${pixel.children ? pixel.children.length : 0}
         </div>
+        ${pixel.protected ? `<button class="admin-btn-sm admin-btn-unprotect" data-tile="${escapeHtml(pixel.id)}">Unprotect</button>` : ''}
       `;
       el.querySelector('[data-session]').addEventListener('click', () => {
         const input = document.getElementById('admin-session-input');
@@ -400,6 +582,27 @@ function onInspectClick(e) {
         }
         el.remove();
       });
+
+      const unprotectBtn = el.querySelector('.admin-btn-unprotect');
+      if (unprotectBtn) {
+        unprotectBtn.addEventListener('click', async () => {
+          unprotectBtn.disabled = true;
+          unprotectBtn.textContent = 'Unprotecting...';
+          const body = { tileKeys: [pixel.id] };
+          if (CONFIG.SPACE) body.space = CONFIG.SPACE;
+          const res = await adminFetch('/admin/unprotect', {
+            method: 'POST',
+            body: JSON.stringify(body)
+          });
+          if (res && res.ok) {
+            unprotectBtn.textContent = 'Unprotected';
+            el.remove();
+            if (typeof refreshViewport === 'function') refreshViewport();
+          } else {
+            unprotectBtn.textContent = 'Failed';
+          }
+        });
+      }
     })
     .catch(() => {
       el.innerHTML = '<div class="admin-pixel-popup-loading">Failed</div>';
@@ -409,101 +612,6 @@ function onInspectClick(e) {
     const p = document.getElementById('admin-pixel-popup');
     if (p) p.remove();
   }, 8000);
-}
-
-function toggleRegionMode() {
-  _regionMode = !_regionMode;
-  const btn = document.getElementById('admin-region-btn');
-  const info = document.getElementById('admin-region-info');
-  const mapEl = document.getElementById('map');
-
-  if (_regionMode) {
-    if (_inspectMode) disableInspectMode();
-    btn.textContent = 'Cancel Selection';
-    btn.classList.add('active');
-    info.textContent = 'Click and drag on the map to select a region';
-    mapEl.classList.add('region-select-mode');
-    if (typeof map !== 'undefined') {
-      map.dragging.disable();
-      map.getContainer().addEventListener('mousedown', onRegionStart);
-      map.getContainer().addEventListener('mousemove', onRegionMove);
-      map.getContainer().addEventListener('mouseup', onRegionEnd);
-    }
-  } else {
-    btn.textContent = 'Erase Region';
-    btn.classList.remove('active');
-    info.textContent = '';
-    mapEl.classList.remove('region-select-mode');
-    if (typeof map !== 'undefined') {
-      map.dragging.enable();
-      map.getContainer().removeEventListener('mousedown', onRegionStart);
-      map.getContainer().removeEventListener('mousemove', onRegionMove);
-      map.getContainer().removeEventListener('mouseup', onRegionEnd);
-    }
-    if (_regionRect) {
-      map.removeLayer(_regionRect);
-      _regionRect = null;
-    }
-  }
-}
-
-function onRegionStart(e) {
-  if (!_regionMode || typeof map === 'undefined') return;
-  _regionStart = map.mouseEventToLatLng(e);
-  if (_regionRect) {
-    map.removeLayer(_regionRect);
-    _regionRect = null;
-  }
-}
-
-function onRegionMove(e) {
-  if (!_regionMode || !_regionStart || typeof map === 'undefined') return;
-  const end = map.mouseEventToLatLng(e);
-  const bounds = L.latLngBounds(_regionStart, end);
-  if (_regionRect) {
-    _regionRect.setBounds(bounds);
-  } else {
-    _regionRect = L.rectangle(bounds, {
-      color: '#e94560',
-      fillColor: '#e94560',
-      fillOpacity: 0.15,
-      weight: 2,
-      dashArray: '6 4',
-      interactive: false
-    }).addTo(map);
-  }
-}
-
-async function onRegionEnd(e) {
-  if (!_regionMode || !_regionStart || typeof map === 'undefined') return;
-  const end = map.mouseEventToLatLng(e);
-  const bounds = L.latLngBounds(_regionStart, end);
-  _regionStart = null;
-
-  const n = bounds.getNorth();
-  const s = bounds.getSouth();
-  const eLng = bounds.getEast();
-  const w = bounds.getWest();
-
-  const info = document.getElementById('admin-region-info');
-  info.textContent = `Selected: ${((n - s) * 111).toFixed(0)}m × ${(((eLng - w) * 111 * Math.cos((n + s) / 2 * Math.PI / 180))).toFixed(0)}m`;
-
-  if (!confirm(`Erase all pixels in this region?`)) {
-    info.textContent = 'Cancelled';
-    return;
-  }
-
-  info.textContent = 'Erasing...';
-  const res = await adminFetch(`/admin/region?n=${n}&s=${s}&e=${eLng}&w=${w}`, { method: 'DELETE' });
-  if (res && res.ok) {
-    const data = await res.json();
-    info.textContent = `Erased ${data.deleted} pixels`;
-    if (typeof refreshViewport === 'function') refreshViewport();
-  } else {
-    info.textContent = 'Erase failed';
-  }
-
-  toggleRegionMode();
 }
 
 function showTokenPrompt(errorMsg) {

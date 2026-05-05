@@ -394,6 +394,8 @@ function onWSPixel(data) {
   }
 
   renderPixel(data);
+  renderProtectedBorders();
+  renderTtlExtendedBorders();
 }
 
 function onWSChild(data, msgType) {
@@ -430,6 +432,9 @@ function onPaintError(reason, count, retryAfter) {
     showToast(`Slow down! Try again in ${retryAfter || 30}s`);
   } else if (reason === 'blocked') {
     showToast('Painting suspended — your session was flagged');
+  } else if (reason === 'protected') {
+    showToast('This pixel is protected');
+    scheduleViewportRefresh();
   } else if (reason === 'no_viewport') {
     showToast('Connecting \u2014 try again in a moment');
     scheduleViewportRefresh();

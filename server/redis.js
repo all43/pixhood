@@ -14,9 +14,11 @@ async function connect() {
 }
 
 const TTL = 86400;
+const TTL_EXTENDED = 30 * 24 * 3600;
 const GEO_KEY_GLOBAL = 'pixels:geo';
 const PAINT_LOG_TTL = 86400;
 const FLAGGED_KEY = 'flagged_sessions';
+const PROTECTED_KEY_GLOBAL = 'protected_tiles';
 const SPACE_SLUG_RE = /^[a-zA-Z0-9]{12}$/;
 
 function paintLogKey(sessionId) { return `paintlog:${sessionId}`; }
@@ -45,11 +47,22 @@ function geoKey(space) {
   return space ? `space:${space}:pixels:geo` : GEO_KEY_GLOBAL;
 }
 
+function protectedTilesKey(space) {
+  return space ? `space:${space}:protected_tiles` : PROTECTED_KEY_GLOBAL;
+}
+
 async function savePixel(pixel, space) {
   const key = pixelKey(pixel.id, space);
   const gKey = geoKey(space);
   const multi = client.multi();
-  multi.set(key, JSON.stringify(pixel), { EX: TTL });
+  if (pixel.protected) {
+    multi.set(key, JSON.stringify(pixel));
+    multi.persist(key);
+  } else if (pixel.ttlExtended) {
+    multi.set(key, JSON.stringify(pixel), { EX: TTL_EXTENDED });
+  } else {
+    multi.set(key, JSON.stringify(pixel), { EX: TTL });
+  }
   multi.geoAdd(gKey, { longitude: pixel.lng, latitude: pixel.lat, member: pixel.id });
   await multi.exec();
 }
@@ -62,13 +75,29 @@ async function saveChildPixel(parentId, childKey, childPixel, space) {
   const subKey = subpixelsKey(parentId, space);
   const pKey = pixelKey(parentId, space);
 
+  const rawParent = await client.get(pKey);
+  const parentData = rawParent ? safeParse(rawParent) : null;
+  const isProtected = parentData && parentData.protected;
+  const parentTtl = isProtected ? -1 : (parentData && parentData.ttlExtended ? TTL_EXTENDED : TTL);
+
   const multi = client.multi();
   multi.hSet(subKey, childKey, JSON.stringify(childPixel));
-  multi.expire(subKey, TTL);
-  multi.expire(pKey, TTL);
+  if (isProtected) {
+    multi.persist(subKey);
+  } else if (parentData && parentData.ttlExtended) {
+    multi.expire(subKey, TTL_EXTENDED);
+  } else {
+    multi.expire(subKey, TTL);
+  }
+  if (isProtected) {
+    multi.persist(pKey);
+  } else if (parentData && parentData.ttlExtended) {
+    multi.expire(pKey, TTL_EXTENDED);
+  } else {
+    multi.expire(pKey, TTL);
+  }
   await multi.exec();
 
-  const rawParent = await client.get(pKey);
   const rawChildren = await client.hGetAll(subKey);
 
   const children = Object.values(rawChildren).map(v => safeParse(v)).filter(Boolean);
@@ -114,25 +143,48 @@ async function getSubpixels(parentId, space) {
   const exists = await client.exists(key);
   if (!exists) return [];
   const raw = await client.hGetAll(key);
-  await client.expire(key, TTL);
+  const rawParent = await client.get(pixelKey(parentId, space));
+  const parentData = rawParent ? safeParse(rawParent) : null;
+  const parentTtl = parentData && parentData.protected ? -1 : (parentData && parentData.ttlExtended ? TTL_EXTENDED : TTL);
+  if (parentTtl === -1) {
+    await client.persist(key);
+  } else {
+    await client.expire(key, parentTtl);
+  }
   return Object.values(raw).map(v => safeParse(v)).filter(Boolean);
 }
 
 async function getSubpixelsMulti(parentIds, space) {
   if (parentIds.length === 0) return [];
+
   const pipeline = client.multi();
   for (const id of parentIds) {
     pipeline.hGetAll(subpixelsKey(id, space));
-    pipeline.expire(subpixelsKey(id, space), TTL);
+    pipeline.ttl(pixelKey(id, space));
   }
   const results = await pipeline.exec();
+
+  const expirePipeline = client.multi();
   const childrenArrays = [];
   for (let i = 0; i < parentIds.length; i++) {
     const raw = results[i * 2];
-    childrenArrays.push(raw && Object.keys(raw).length > 0
-      ? Object.values(raw).map(v => safeParse(v)).filter(Boolean)
-      : []);
+    const parentTtl = results[i * 2 + 1];
+    const hasChildren = raw && Object.keys(raw).length > 0;
+    const children = hasChildren ? Object.values(raw).map(v => safeParse(v)).filter(Boolean) : [];
+    childrenArrays.push(children);
+
+    if (hasChildren) {
+      if (parentTtl === -1) {
+        expirePipeline.persist(subpixelsKey(parentIds[i], space));
+      } else if (parentTtl > TTL) {
+        expirePipeline.expire(subpixelsKey(parentIds[i], space), parentTtl);
+      } else {
+        expirePipeline.expire(subpixelsKey(parentIds[i], space), TTL);
+      }
+    }
   }
+  await expirePipeline.exec();
+
   return childrenArrays;
 }
 
@@ -260,6 +312,10 @@ async function revertSession(sessionId) {
     entries.sort((a, b) => a.timestamp - b.timestamp);
     const space = entries[0].space || null;
     try {
+      const currentRaw = await client.get(pixelKey(tileKey, space));
+      const currentPixel = currentRaw ? safeParse(currentRaw) : null;
+      if (currentPixel && currentPixel.protected) continue;
+
       const hasParentPaint = entries.some(e => e.type === 'parent' || e.type === 'erase');
 
       if (hasParentPaint) {
@@ -358,6 +414,10 @@ async function undoLastPaints(sessionId, count) {
     tileEntries.sort((a, b) => a.timestamp - b.timestamp);
     const space = tileEntries[0].space || null;
     try {
+      const currentRaw = await client.get(pixelKey(tileKey, space));
+      const currentPixel = currentRaw ? safeParse(currentRaw) : null;
+      if (currentPixel && currentPixel.protected) continue;
+
       const hasParentPaint = tileEntries.some(e => e.type === 'parent' || e.type === 'erase');
 
       if (hasParentPaint) {
@@ -506,14 +566,129 @@ async function deletePixelsInRegion(n, s, e, w, space) {
   if (staleKeys.length > 0) await cleanupGeoIndex(staleKeys, space);
 
   const deleted = [];
+  const skipped = [];
   for (const pixel of pixels) {
+    if (pixel.protected) {
+      skipped.push(pixel);
+      continue;
+    }
     await client.del(pixelKey(pixel.id, space));
     await client.del(subpixelsKey(pixel.id, space));
     await client.zRem(geoKey(space), pixel.id);
     deleted.push(pixel);
   }
 
-  return deleted;
+  return { deleted, skipped };
+}
+
+async function protectPixels(tileKeys, space) {
+  const pKey = protectedTilesKey(space);
+  let protectedCount = 0;
+  for (const tileKey of tileKeys) {
+    const raw = await client.get(pixelKey(tileKey, space));
+    if (!raw) continue;
+    const pixel = safeParse(raw);
+    if (!pixel) continue;
+    if (pixel.protected) continue;
+
+    pixel.protected = true;
+    delete pixel.ttlExtended;
+    delete pixel.ttlExpiresAt;
+
+    const multi = client.multi();
+    multi.set(pixelKey(tileKey, space), JSON.stringify(pixel));
+    multi.persist(pixelKey(tileKey, space));
+    multi.sAdd(pKey, tileKey);
+    await multi.exec();
+
+    const subKey = subpixelsKey(tileKey, space);
+    const subExists = await client.exists(subKey);
+    if (subExists) {
+      await client.persist(subKey);
+    }
+
+    protectedCount++;
+  }
+  return protectedCount;
+}
+
+async function unprotectPixels(tileKeys, space) {
+  const pKey = protectedTilesKey(space);
+  let unprotected = 0;
+  for (const tileKey of tileKeys) {
+    const raw = await client.get(pixelKey(tileKey, space));
+    if (!raw) {
+      await client.sRem(pKey, tileKey);
+      continue;
+    }
+    const pixel = safeParse(raw);
+    if (!pixel) continue;
+    if (!pixel.protected) continue;
+
+    delete pixel.protected;
+
+    const multi = client.multi();
+    multi.set(pixelKey(tileKey, space), JSON.stringify(pixel), { EX: TTL });
+    multi.sRem(pKey, tileKey);
+    await multi.exec();
+
+    const subKey = subpixelsKey(tileKey, space);
+    const subExists = await client.exists(subKey);
+    if (subExists) {
+      await client.expire(subKey, TTL);
+    }
+
+    unprotected++;
+  }
+  return unprotected;
+}
+
+async function extendTtlPixels(tileKeys, space) {
+  let extended = 0;
+  const expiresAt = new Date(Date.now() + TTL_EXTENDED * 1000).toISOString();
+  for (const tileKey of tileKeys) {
+    const raw = await client.get(pixelKey(tileKey, space));
+    if (!raw) continue;
+    const pixel = safeParse(raw);
+    if (!pixel) continue;
+    if (pixel.protected) continue;
+    if (pixel.ttlExtended) continue;
+
+    pixel.ttlExtended = true;
+    pixel.ttlExpiresAt = expiresAt;
+
+    const multi = client.multi();
+    multi.set(pixelKey(tileKey, space), JSON.stringify(pixel), { EX: TTL_EXTENDED });
+    await multi.exec();
+
+    const subKey = subpixelsKey(tileKey, space);
+    const subExists = await client.exists(subKey);
+    if (subExists) {
+      await client.expire(subKey, TTL_EXTENDED);
+    }
+
+    extended++;
+  }
+  return extended;
+}
+
+async function getProtectedTiles(space) {
+  const members = await client.sMembers(protectedTilesKey(space));
+  const tiles = [];
+  for (const tileKey of members) {
+    const raw = await client.get(pixelKey(tileKey, space));
+    if (!raw) {
+      await client.sRem(protectedTilesKey(space), tileKey);
+      continue;
+    }
+    const pixel = safeParse(raw);
+    if (!pixel || !pixel.protected) {
+      await client.sRem(protectedTilesKey(space), tileKey);
+      continue;
+    }
+    tiles.push(pixel);
+  }
+  return tiles;
 }
 
 module.exports = {
@@ -549,5 +724,14 @@ module.exports = {
   resetAdminFailure,
   deletePixelsInRegion,
   getActiveSessions,
-  SPACE_SLUG_RE
+  SPACE_SLUG_RE,
+  TTL_EXTENDED,
+  protectPixels,
+  unprotectPixels,
+  extendTtlPixels,
+  getProtectedTiles,
+  pixelKey,
+  subpixelsKey,
+  geoKey,
+  protectedTilesKey
 };

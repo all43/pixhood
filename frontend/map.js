@@ -6,6 +6,9 @@ let boundaryRect;
 const pixelLayers = {};
 const childLayers = {};
 const childrenCache = {};
+const protectedSet = new Set();
+const protectedBorderLayers = {};
+const ttlExtendedLayers = {};
 
 function computeParentDisplay(children) {
   if (!children || children.length === 0) return { color: null, opacity: 0 };
@@ -24,6 +27,81 @@ function computeParentDisplay(children) {
   const opacity = Math.sqrt(n / totalCells);
 
   return { color, opacity };
+}
+
+function parseTileKey(key) {
+  const parts = key.split('_');
+  const tx = Number(parts[0]);
+  const ty = Number(parts[1]);
+  return { tx, ty };
+}
+
+function renderProtectedBorders() {
+  for (const id of Object.keys(protectedBorderLayers)) {
+    for (const line of protectedBorderLayers[id]) {
+      if (map.hasLayer(line)) map.removeLayer(line);
+    }
+    delete protectedBorderLayers[id];
+  }
+
+  if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
+
+  for (const id of protectedSet) {
+    const { tx, ty } = parseTileKey(id);
+    const bounds = tileBounds(id);
+    const neighbors = [
+      { dx: -1, dy: 0, edge: [[bounds.sw[0], bounds.sw[1]], [bounds.ne[0], bounds.sw[1]]] },
+      { dx: 1, dy: 0, edge: [[bounds.sw[0], bounds.ne[1]], [bounds.ne[0], bounds.ne[1]]] },
+      { dx: 0, dy: 1, edge: [[bounds.ne[0], bounds.sw[1]], [bounds.ne[0], bounds.ne[1]]] },
+      { dx: 0, dy: -1, edge: [[bounds.sw[0], bounds.sw[1]], [bounds.sw[0], bounds.ne[1]]] }
+    ];
+
+    const lines = [];
+    for (const { dx, dy, edge } of neighbors) {
+      const neighborKey = `${tx + dx}_${ty + dy}`;
+      if (!protectedSet.has(neighborKey)) {
+        const line = L.polyline(edge, {
+          color: CONFIG.PROTECTED_BORDER_COLOR,
+          weight: CONFIG.PROTECTED_BORDER_WEIGHT,
+          interactive: false
+        });
+        line.addTo(map);
+        lines.push(line);
+      }
+    }
+    if (lines.length > 0) {
+      protectedBorderLayers[id] = lines;
+    }
+  }
+}
+
+function renderTtlExtendedBorders() {
+  for (const id of Object.keys(ttlExtendedLayers)) {
+    for (const line of ttlExtendedLayers[id]) {
+      if (map.hasLayer(line)) map.removeLayer(line);
+    }
+    delete ttlExtendedLayers[id];
+  }
+
+  if (!document.getElementById('admin-panel')) return;
+  if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
+
+  for (const id of Object.keys(pixelLayers)) {
+    const pixelData = pixelLayers[id]._pixelData;
+    if (!pixelData || !pixelData.ttlExtended) continue;
+    if (protectedSet.has(id)) continue;
+
+    const bounds = tileBounds(id);
+    const rect = L.rectangle([bounds.sw, bounds.ne], {
+      color: CONFIG.TTL_EXTENDED_BORDER_COLOR,
+      fillColor: 'transparent',
+      fillOpacity: 0,
+      weight: CONFIG.TTL_EXTENDED_BORDER_WEIGHT,
+      interactive: false
+    });
+    rect.addTo(map);
+    ttlExtendedLayers[id] = [rect];
+  }
 }
 
 function initMap(lat, lng) {
@@ -56,6 +134,8 @@ function onZoomChange() {
   updateGridVisibility();
   updateSubGridVisibility();
   updateChildrenVisibility();
+  renderProtectedBorders();
+  renderTtlExtendedBorders();
   const mapEl = document.getElementById('map');
   if (mapEl) {
     mapEl.classList.toggle('no-paint', map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD);
@@ -385,6 +465,9 @@ function renderPixels(pixels) {
       }
     }
   }
+
+  renderProtectedBorders();
+  renderTtlExtendedBorders();
 }
 
 function renderPixel(pixel) {
@@ -393,6 +476,7 @@ function renderPixel(pixel) {
 
   if (pixelLayers[id]) {
     pixelLayers[id].setStyle({ fillColor: color, color: color, fillOpacity: CONFIG.PIXEL_OPACITY });
+    pixelLayers[id]._pixelData = pixel;
   } else {
     const rect = L.rectangle([bounds.sw, bounds.ne], {
       color,
@@ -402,7 +486,14 @@ function renderPixel(pixel) {
       interactive: false
     });
     rect.addTo(map);
+    rect._pixelData = pixel;
     pixelLayers[id] = rect;
+  }
+
+  if (pixel.protected) {
+    protectedSet.add(id);
+  } else {
+    protectedSet.delete(id);
   }
 }
 
@@ -412,6 +503,7 @@ function renderParentWithChildren(pixel) {
 
   if (pixelLayers[pixel.id]) {
     pixelLayers[pixel.id].setStyle({ fillColor: display.color, color: display.color, fillOpacity: display.opacity });
+    pixelLayers[pixel.id]._pixelData = pixel;
   } else {
     const rect = L.rectangle([bounds.sw, bounds.ne], {
       color: display.color,
@@ -421,7 +513,14 @@ function renderParentWithChildren(pixel) {
       interactive: false
     });
     rect.addTo(map);
+    rect._pixelData = pixel;
     pixelLayers[pixel.id] = rect;
+  }
+
+  if (pixel.protected) {
+    protectedSet.add(pixel.id);
+  } else {
+    protectedSet.delete(pixel.id);
   }
 
   if (pixel.children && map.getZoom() >= CONFIG.SUB_GRID_ZOOM) {
@@ -504,6 +603,15 @@ function removePixel(id) {
     delete childLayers[id];
   }
   delete childrenCache[id];
+  protectedSet.delete(id);
+  if (protectedBorderLayers[id]) {
+    for (const line of protectedBorderLayers[id]) map.removeLayer(line);
+    delete protectedBorderLayers[id];
+  }
+  if (ttlExtendedLayers[id]) {
+    for (const line of ttlExtendedLayers[id]) map.removeLayer(line);
+    delete ttlExtendedLayers[id];
+  }
 }
 
 function removeChildren(parentId) {

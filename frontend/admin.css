@@ -235,6 +235,36 @@
   background: rgba(233, 69, 96, 0.15);
 }
 
+.admin-btn-protect {
+  color: #FFD700;
+  border-color: rgba(255, 215, 0, 0.3);
+}
+
+.admin-btn-protect:hover {
+  background: rgba(255, 215, 0, 0.15);
+}
+
+.admin-btn-protect.active {
+  background: #FFD700;
+  color: #1a1a2e;
+  border-color: #FFD700;
+}
+
+.admin-btn-extend {
+  color: rgba(100, 150, 255, 0.85);
+  border-color: rgba(100, 150, 255, 0.3);
+}
+
+.admin-btn-extend:hover {
+  background: rgba(100, 150, 255, 0.15);
+}
+
+.admin-btn-extend.active {
+  background: rgba(100, 150, 255, 0.85);
+  color: #1a1a2e;
+  border-color: rgba(100, 150, 255, 0.85);
+}
+
 .admin-btn.active {
   background: #e94560;
   color: #fff;
@@ -324,6 +354,40 @@
 
 .admin-pixel-popup-session:hover {
   text-decoration: underline;
+}
+
+.admin-protected-badge {
+  color: #FFD700;
+  font-weight: 600;
+  font-size: 11px;
+  background: rgba(255, 215, 0, 0.15);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+.admin-ttl-badge {
+  color: rgba(100, 150, 255, 0.85);
+  font-weight: 600;
+  font-size: 11px;
+  background: rgba(100, 150, 255, 0.15);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
+.admin-btn-unprotect {
+  margin-top: 6px;
+  color: #FFD700;
+  border-color: rgba(255, 215, 0, 0.4);
+  background: rgba(255, 215, 0, 0.1);
+}
+
+.admin-btn-unprotect:hover {
+  background: rgba(255, 215, 0, 0.2);
+}
+
+.admin-btn-unprotect:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .admin-pixel-popup-loading {
