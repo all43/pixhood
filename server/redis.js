@@ -123,69 +123,50 @@ function findConnectedComponents (tileKeySet) {
 }
 
 function traceOutline (component) {
-  const edges = new Map()
-  const DIRS = [
-    { dx: 0, dy: 1, edgeKey: (tx, ty) => `b${tx}_${ty}`, p1: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng(tx * TILE_SIZE)], p2: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)] },
-    { dx: 0, dy: -1, edgeKey: (tx, ty) => `t${tx}_${ty}`, p1: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)], p2: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng(tx * TILE_SIZE)] },
-    { dx: 1, dy: 0, edgeKey: (tx, ty) => `r${tx}_${ty}`, p1: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)], p2: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng((tx + 1) * TILE_SIZE)] },
-    { dx: -1, dy: 0, edgeKey: (tx, ty) => `l${tx}_${ty}`, p1: (tx, ty) => [yToLat(ty * TILE_SIZE), xToLng(tx * TILE_SIZE)], p2: (tx, ty) => [yToLat((ty + 1) * TILE_SIZE), xToLng(tx * TILE_SIZE)] }
-  ]
-
-  const pointKey = (p) => `${p[0].toFixed(10)},${p[1].toFixed(10)}`
-  const adj = new Map()
+  const next = new Map()
 
   for (const tk of component) {
     const { tx, ty } = parseTileKey(tk)
-    for (const d of DIRS) {
-      const nk = `${tx + d.dx}_${ty + d.dy}`
-      if (component.has(nk)) continue
-      const ek = d.edgeKey(tx, ty)
-      if (edges.has(ek)) continue
-      edges.set(ek, true)
-      const a = d.p1(tx, ty)
-      const b = d.p2(tx, ty)
-      const ak = pointKey(a)
-      const bk = pointKey(b)
-      if (!adj.has(ak)) adj.set(ak, [])
-      adj.get(ak).push(b)
-      if (!adj.has(bk)) adj.set(bk, [])
-      adj.get(bk).push(a)
+
+    if (!component.has(`${tx}_${ty + 1}`)) {
+      const from = `${tx},${ty + 1}`
+      const to = `${tx + 1},${ty + 1}`
+      next.set(from, to)
+    }
+    if (!component.has(`${tx + 1}_${ty}`)) {
+      const from = `${tx + 1},${ty + 1}`
+      const to = `${tx + 1},${ty}`
+      next.set(from, to)
+    }
+    if (!component.has(`${tx}_${ty - 1}`)) {
+      const from = `${tx + 1},${ty}`
+      const to = `${tx},${ty}`
+      next.set(from, to)
+    }
+    if (!component.has(`${tx - 1}_${ty}`)) {
+      const from = `${tx},${ty}`
+      const to = `${tx},${ty + 1}`
+      next.set(from, to)
     }
   }
 
-  if (edges.size === 0) return []
+  if (next.size === 0) return []
 
+  const start = next.keys().next().value
   const outline = []
-  let current = null
-  for (const [k, neighbors] of adj) {
-    current = neighbors[0]
-    const [lat, lng] = k.split(',').map(Number)
-    outline.push([lat, lng])
-    break
-  }
+  let current = start
+  let safety = next.size + 2
 
-  const visitedEdges = new Set()
-  let safety = edges.size + 2
   while (safety-- > 0) {
-    const ck = pointKey(current)
-    const neighbors = adj.get(ck)
-    if (!neighbors) break
-    let found = false
-    for (const n of neighbors) {
-      const ek = ck + '>' + pointKey(n)
-      if (!visitedEdges.has(ek)) {
-        visitedEdges.add(ek)
-        if (outline.length > 2 && pointKey(n) === pointKey(outline[0])) {
-          outline.push(outline[0])
-          return outline
-        }
-        outline.push(n)
-        current = n
-        found = true
-        break
-      }
+    const [cx, cy] = current.split(',').map(Number)
+    outline.push([yToLat(cy * TILE_SIZE), xToLng(cx * TILE_SIZE)])
+
+    current = next.get(current)
+    if (!current) break
+    if (current === start) {
+      outline.push(outline[0])
+      return outline
     }
-    if (!found) break
   }
 
   return outline
