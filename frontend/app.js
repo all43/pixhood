@@ -398,6 +398,11 @@ function onWSPixel(data) {
   renderTtlExtendedBorders();
 }
 
+async function onRegionsChanged() {
+  await fetchProtectedRegions();
+  renderProtectedBorders();
+}
+
 function onWSChild(data, msgType) {
   if (msgType === CONFIG.WS_TYPE_CLEAR_CHILDREN) {
     if (data.parentId) removeChildren(data.parentId);
@@ -433,7 +438,7 @@ function onPaintError(reason, count, retryAfter) {
   } else if (reason === 'blocked') {
     showToast('Painting suspended — your session was flagged');
   } else if (reason === 'protected') {
-    showToast('This pixel is protected');
+    showToast('This area is protected');
     scheduleViewportRefresh();
   } else if (reason === 'no_viewport') {
     showToast('Connecting \u2014 try again in a moment');
@@ -469,7 +474,7 @@ async function refreshViewport() {
 
   try {
     const pixels = await loadViewport(vb, zoom);
-    renderPixels(pixels);
+    await renderPixels(pixels);
     sendViewport(vb);
     updateBoundaryVisualization();
   } catch (err) {
@@ -494,7 +499,7 @@ async function proceedToMap(geoResult, pixelsPromise) {
 
   try {
     const pixels = await pixelsPromise;
-    renderPixels(pixels);
+    await renderPixels(pixels);
     updateBoundaryVisualization();
   } catch (err) {
     console.error('Failed to load pixels:', err);
@@ -507,7 +512,7 @@ async function proceedToMap(geoResult, pixelsPromise) {
     if (status === 'disconnected') {
       showToast('Connection lost — reconnecting\u2026');
     }
-  });
+  }, onRegionsChanged);
 
   const vb = getViewportBounds();
   sendViewport(vb);

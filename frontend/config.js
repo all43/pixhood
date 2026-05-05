@@ -78,6 +78,7 @@ const CONFIG = {
   WS_TYPE_PAINT_ERASE: 'paintErase',
   WS_TYPE_UNDO_PAINT: 'undoPaint',
   WS_TYPE_UNDO_RESULT: 'undoResult',
+  WS_TYPE_REGIONS_CHANGED: 'protectedRegionsChanged',
 
   ERASE_COLOR: '__erase__',
 

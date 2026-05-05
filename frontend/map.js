@@ -7,8 +7,21 @@ const pixelLayers = {};
 const childLayers = {};
 const childrenCache = {};
 const protectedSet = new Set();
-const protectedBorderLayers = {};
+let protectedRegionBorders = [];
+let protectedRegionsCache = [];
 const ttlExtendedLayers = {};
+
+async function fetchProtectedRegions() {
+  try {
+    const params = new URLSearchParams();
+    if (CONFIG.SPACE) params.set('space', CONFIG.SPACE);
+    const res = await fetch(`${CONFIG.API_URL}/protected-regions?${params}`);
+    if (res.ok) {
+      protectedRegionsCache = await res.json();
+    }
+  } catch {}
+  return protectedRegionsCache;
+}
 
 function computeParentDisplay(children) {
   if (!children || children.length === 0) return { color: null, opacity: 0 };
@@ -29,49 +42,50 @@ function computeParentDisplay(children) {
   return { color, opacity };
 }
 
-function parseTileKey(key) {
-  const parts = key.split('_');
-  const tx = Number(parts[0]);
-  const ty = Number(parts[1]);
-  return { tx, ty };
+function mergeRectangles(rects) {
+  if (rects.length === 0) return [];
+  const sorted = [...rects].sort((a, b) => a.s - b.s || a.w - b.w);
+  const merged = [sorted[0]];
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    const cur = sorted[i];
+    if (cur.s <= last.n && cur.w <= last.e && cur.e >= last.w) {
+      last.n = Math.max(last.n, cur.n);
+      last.s = Math.min(last.s, cur.s);
+      last.w = Math.min(last.w, cur.w);
+      last.e = Math.max(last.e, cur.e);
+    } else {
+      merged.push({ ...cur });
+    }
+  }
+  return merged;
 }
 
 function renderProtectedBorders() {
-  for (const id of Object.keys(protectedBorderLayers)) {
-    for (const line of protectedBorderLayers[id]) {
-      if (map.hasLayer(line)) map.removeLayer(line);
-    }
-    delete protectedBorderLayers[id];
+  for (const line of protectedRegionBorders) {
+    if (map.hasLayer(line)) map.removeLayer(line);
   }
+  protectedRegionBorders = [];
 
   if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
 
-  for (const id of protectedSet) {
-    const { tx, ty } = parseTileKey(id);
-    const bounds = tileBounds(id);
-    const neighbors = [
-      { dx: -1, dy: 0, edge: [[bounds.sw[0], bounds.sw[1]], [bounds.ne[0], bounds.sw[1]]] },
-      { dx: 1, dy: 0, edge: [[bounds.sw[0], bounds.ne[1]], [bounds.ne[0], bounds.ne[1]]] },
-      { dx: 0, dy: 1, edge: [[bounds.ne[0], bounds.sw[1]], [bounds.ne[0], bounds.ne[1]]] },
-      { dx: 0, dy: -1, edge: [[bounds.sw[0], bounds.sw[1]], [bounds.sw[0], bounds.ne[1]]] }
+  const merged = mergeRectangles(protectedRegionsCache);
+  for (const region of merged) {
+    const outline = [
+      [region.s, region.w],
+      [region.n, region.w],
+      [region.n, region.e],
+      [region.s, region.e],
+      [region.s, region.w]
     ];
-
-    const lines = [];
-    for (const { dx, dy, edge } of neighbors) {
-      const neighborKey = `${tx + dx}_${ty + dy}`;
-      if (!protectedSet.has(neighborKey)) {
-        const line = L.polyline(edge, {
-          color: CONFIG.PROTECTED_BORDER_COLOR,
-          weight: CONFIG.PROTECTED_BORDER_WEIGHT,
-          interactive: false
-        });
-        line.addTo(map);
-        lines.push(line);
-      }
-    }
-    if (lines.length > 0) {
-      protectedBorderLayers[id] = lines;
-    }
+    const line = L.polyline(outline, {
+      color: CONFIG.PROTECTED_BORDER_COLOR,
+      weight: CONFIG.PROTECTED_BORDER_WEIGHT,
+      dashArray: '6 4',
+      interactive: false
+    });
+    line.addTo(map);
+    protectedRegionBorders.push(line);
   }
 }
 
@@ -86,10 +100,15 @@ function renderTtlExtendedBorders() {
   if (!document.getElementById('admin-panel')) return;
   if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
 
+  const pKey = (id) => {
+    const raw = pixelLayers[id]?._pixelData;
+    return raw && raw.protected;
+  };
+
   for (const id of Object.keys(pixelLayers)) {
     const pixelData = pixelLayers[id]._pixelData;
     if (!pixelData || !pixelData.ttlExtended) continue;
-    if (protectedSet.has(id)) continue;
+    if (pKey(id)) continue;
 
     const bounds = tileBounds(id);
     const rect = L.rectangle([bounds.sw, bounds.ne], {
@@ -428,7 +447,7 @@ function clearAllPixels() {
   }
 }
 
-function renderPixels(pixels) {
+async function renderPixels(pixels) {
   const parentIds = new Set(pixels.map(p => p.id));
 
   for (const id of Object.keys(pixelLayers)) {
@@ -466,6 +485,9 @@ function renderPixels(pixels) {
     }
   }
 
+  if (protectedRegionsCache.length === 0) {
+    await fetchProtectedRegions();
+  }
   renderProtectedBorders();
   renderTtlExtendedBorders();
 }
@@ -604,10 +626,6 @@ function removePixel(id) {
   }
   delete childrenCache[id];
   protectedSet.delete(id);
-  if (protectedBorderLayers[id]) {
-    for (const line of protectedBorderLayers[id]) map.removeLayer(line);
-    delete protectedBorderLayers[id];
-  }
   if (ttlExtendedLayers[id]) {
     for (const line of ttlExtendedLayers[id]) map.removeLayer(line);
     delete ttlExtendedLayers[id];

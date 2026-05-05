@@ -27,7 +27,7 @@ const REGION_MODES = {
     activeLabel: 'Cancel',
     hint: 'Click and drag on the map to select a region to protect',
     rectStyle: { color: '#FFD700', fillColor: '#FFD700', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
-    confirmText: 'Protect all pixels in this region?',
+    confirmText: 'Protect all tiles in this region? This will block painting on empty and painted tiles.',
     loadingText: 'Protecting...',
     failText: 'Protect failed',
     async makeRequest(n, s, e, w) {
@@ -35,7 +35,7 @@ const REGION_MODES = {
       if (CONFIG.SPACE) body.space = CONFIG.SPACE;
       return await adminFetch('/admin/protect', { method: 'POST', body: JSON.stringify(body) });
     },
-    formatResult(data) { return `Protected ${data.protected} pixels`; }
+    formatResult(data) { return `Protected ${data.tilesCount} tiles (${data.protected} with pixels)`; }
   },
   extend: {
     btnId: 'admin-extend-ttl-btn',
@@ -262,6 +262,11 @@ function createAdminPanel() {
       <button class="admin-btn" id="admin-load-sessions">Load Active Sessions</button>
       <div id="admin-sessions-list" class="admin-list"></div>
     </div>
+    <div class="admin-section">
+      <h3>Protected Regions</h3>
+      <button class="admin-btn admin-btn-protect" id="admin-load-regions">Load Regions</button>
+      <div id="admin-regions-list" class="admin-list"></div>
+    </div>
     <div class="admin-section admin-section-collapsible">
       <h3 class="admin-collapsible-toggle" id="admin-flagged-toggle">Flagged Sessions ▸</h3>
       <div id="admin-flagged-list" class="admin-list admin-collapsible-content"></div>
@@ -282,6 +287,7 @@ function createAdminPanel() {
   });
 
   document.getElementById('admin-load-sessions').addEventListener('click', loadSessions);
+  document.getElementById('admin-load-regions').addEventListener('click', loadRegions);
   document.getElementById('admin-lookup').addEventListener('click', lookupSession);
   document.getElementById('admin-inspect-btn').addEventListener('click', toggleInspectMode);
 document.getElementById('admin-protect-btn').addEventListener('click', () => {
@@ -357,6 +363,78 @@ async function loadSessions() {
       const lng = parseFloat(btn.dataset.lng);
       if (!isNaN(lat) && !isNaN(lng) && typeof map !== 'undefined') {
         map.setView([lat, lng], 20, { animate: true });
+      }
+    });
+  });
+}
+
+async function loadRegions() {
+  const list = document.getElementById('admin-regions-list');
+  const btn = document.getElementById('admin-load-regions');
+  if (!list || !btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  list.textContent = '';
+
+  const res = await adminFetch('/admin/protected');
+  if (!res) { btn.disabled = false; btn.textContent = 'Load Regions'; return; }
+
+  if (!res.ok) {
+    list.textContent = 'Failed to load';
+    btn.disabled = false;
+    btn.textContent = 'Load Regions';
+    return;
+  }
+
+  const { regions } = await res.json();
+  btn.disabled = false;
+  btn.textContent = `Refresh (${regions.length})`;
+
+  if (regions.length === 0) {
+    list.innerHTML = '<div class="admin-empty">No protected regions</div>';
+    return;
+  }
+
+  list.innerHTML = regions.map(r => {
+    const widthM = ((r.e - r.w) * 111 * Math.cos((r.n + r.s) / 2 * Math.PI / 180)).toFixed(0);
+    const heightM = ((r.n - r.s) * 111).toFixed(0);
+    return `<div class="admin-session-row">
+      <span class="admin-session-id">${escapeHtml(r.id)}</span>
+      <span class="admin-session-meta">${widthM}m × ${heightM}m</span>
+      <button class="admin-btn-sm admin-locate-btn" data-lat="${(r.n + r.s) / 2}" data-lng="${(r.e + r.w) / 2}" title="Locate">⦿</button>
+      <button class="admin-btn-sm admin-btn-danger" data-unprotect-region="${escapeHtml(r.id)}">Unprotect</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.admin-locate-btn').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const lat = parseFloat(b.dataset.lat);
+      const lng = parseFloat(b.dataset.lng);
+      if (!isNaN(lat) && !isNaN(lng) && typeof map !== 'undefined') {
+        map.setView([lat, lng], 18, { animate: true });
+      }
+    });
+  });
+
+  list.querySelectorAll('[data-unprotect-region]').forEach(b => {
+    b.addEventListener('click', async () => {
+      const regionId = b.dataset.unprotectRegion;
+      if (!confirm(`Unprotect region ${regionId}?`)) return;
+      b.disabled = true;
+      b.textContent = 'Removing...';
+      const body = { regionId };
+      if (CONFIG.SPACE) body.space = CONFIG.SPACE;
+      const res = await adminFetch('/admin/unprotect', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      });
+      if (res && res.ok) {
+        b.textContent = 'Done';
+        loadRegions();
+        if (typeof refreshViewport === 'function') refreshViewport();
+      } else {
+        b.textContent = 'Failed';
       }
     });
   });
@@ -550,18 +628,35 @@ function onInspectClick(e) {
   const fb = computeFetchBounds(vb);
   fetch(`${CONFIG.API_URL}/pixels?n=${fb.n}&s=${fb.s}&e=${fb.e}&w=${fb.w}`)
     .then(r => r.json())
-    .then(pixels => {
+    .then(async pixels => {
       const pixel = pixels.find(p => p.id === id);
       if (!pixel) {
         el.innerHTML = '<div class="admin-pixel-popup-loading">No data</div>';
         return;
       }
+
+      let regionInfo = '';
+      const regions = protectedRegionsCache || [];
+      const matchingRegions = regions.filter(r =>
+        pixel.lat >= r.s && pixel.lat <= r.n && pixel.lng >= r.w && pixel.lng <= r.e
+      );
+
+      if (matchingRegions.length > 0) {
+        regionInfo = matchingRegions.map(r =>
+          `<div class="admin-pixel-popup-row admin-protected-badge">Protected region: ${escapeHtml(r.id)}
+            <button class="admin-btn-sm admin-btn-unprotect" data-region="${escapeHtml(r.id)}">Unprotect</button>
+          </div>`
+        ).join('');
+      } else if (pixel.protected) {
+        regionInfo = '<div class="admin-pixel-popup-row admin-protected-badge">Protected (legacy)</div>';
+      }
+
       el.innerHTML = `
         <div class="admin-pixel-popup-row">
           <span class="admin-paint-color" style="background:${safeColor(pixel.color)}"></span>
           <strong>${escapeHtml(pixel.id)}</strong>
         </div>
-        ${pixel.protected ? '<div class="admin-pixel-popup-row admin-protected-badge">Protected</div>' : ''}
+        ${regionInfo}
         ${pixel.ttlExtended ? `<div class="admin-pixel-popup-row admin-ttl-badge">TTL extended until ${new Date(pixel.ttlExpiresAt).toLocaleDateString()}</div>` : ''}
         <div class="admin-pixel-popup-row">
           Session: <span class="admin-pixel-popup-session" data-session="${escapeHtml(pixel.sessionId || 'unknown')}">${escapeHtml(pixel.sessionId || 'unknown')}</span>
@@ -572,7 +667,6 @@ function onInspectClick(e) {
         <div class="admin-pixel-popup-row">
           Children: ${pixel.children ? pixel.children.length : 0}
         </div>
-        ${pixel.protected ? `<button class="admin-btn-sm admin-btn-unprotect" data-tile="${escapeHtml(pixel.id)}">Unprotect</button>` : ''}
       `;
       el.querySelector('[data-session]').addEventListener('click', () => {
         const input = document.getElementById('admin-session-input');
@@ -583,26 +677,25 @@ function onInspectClick(e) {
         el.remove();
       });
 
-      const unprotectBtn = el.querySelector('.admin-btn-unprotect');
-      if (unprotectBtn) {
-        unprotectBtn.addEventListener('click', async () => {
-          unprotectBtn.disabled = true;
-          unprotectBtn.textContent = 'Unprotecting...';
-          const body = { tileKeys: [pixel.id] };
+      el.querySelectorAll('.admin-btn-unprotect').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'Unprotecting...';
+          const body = { regionId: btn.dataset.region };
           if (CONFIG.SPACE) body.space = CONFIG.SPACE;
           const res = await adminFetch('/admin/unprotect', {
             method: 'POST',
             body: JSON.stringify(body)
           });
           if (res && res.ok) {
-            unprotectBtn.textContent = 'Unprotected';
+            btn.textContent = 'Unprotected';
             el.remove();
             if (typeof refreshViewport === 'function') refreshViewport();
           } else {
-            unprotectBtn.textContent = 'Failed';
+            btn.textContent = 'Failed';
           }
         });
-      }
+      });
     })
     .catch(() => {
       el.innerHTML = '<div class="admin-pixel-popup-loading">Failed</div>';

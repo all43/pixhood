@@ -107,6 +107,7 @@ let _onDelete = null;
 let _onPaintError = null;
 let _onBlocked = null;
 let _onStatusChange = null;
+let _onRegionsChanged = null;
 let _retryDelay = 1000;
 let _heartbeatTimer = null;
 let _paintSeq = 0;
@@ -135,13 +136,14 @@ function _flushPending() {
   if (count > 0 && _onPaintError) _onPaintError('disconnect', count);
 }
 
-function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked, onStatusChange) {
+function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked, onStatusChange, onRegionsChanged) {
   _onPixel = onPixel;
   _onChild = onChild || null;
   _onDelete = onDelete || null;
   _onPaintError = onPaintError || null;
   _onBlocked = onBlocked || null;
   _onStatusChange = onStatusChange || null;
+  _onRegionsChanged = onRegionsChanged || null;
   _openWS();
 }
 
@@ -209,6 +211,7 @@ function _openWS() {
         scheduleViewportRefresh();
       }
       if (msg.type === CONFIG.WS_TYPE_BLOCKED && _onBlocked) _onBlocked();
+      if (msg.type === CONFIG.WS_TYPE_REGIONS_CHANGED && _onRegionsChanged) _onRegionsChanged();
     } catch (err) {
       console.error('WS message parse error:', err);
     }
