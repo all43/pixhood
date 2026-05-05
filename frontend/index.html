@@ -49,6 +49,7 @@
         <button id="btn-join-go">Go</button>
         <button id="btn-join-back" type="button">Back</button>
       </div>
+      <div id="welcome-error" class="hidden"></div>
       <a id="privacy-link" href="privacy.html">Privacy Policy</a>
     </div>
     <div id="loading-spinner-screen" class="hidden">
@@ -111,7 +112,7 @@
   <!-- Service Worker registration (production only) -->
   <script>
     if ('serviceWorker' in navigator && location.hostname !== 'localhost') {
-      navigator.serviceWorker.register('/sw.js?v=20260416c')
+      navigator.serviceWorker.register('/sw.js?v=20260505b')
         .then(reg => console.log('SW registered:', reg.scope))
         .catch(err => console.log('SW registration failed:', err));
     }

@@ -416,6 +416,23 @@ html, body {
   color: rgba(255,255,255,0.7);
 }
 
+#welcome-error {
+  width: 100%;
+  margin-top: 1rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid rgba(233, 69, 96, 0.3);
+  border-radius: 6px;
+  color: rgba(255,255,255,0.8);
+  font-size: 0.8rem;
+  letter-spacing: 0.3px;
+  line-height: 1.4;
+}
+
+#welcome-error.hidden {
+  display: none;
+}
+
 #privacy-link {
   display: inline-block;
   margin-top: 1rem;
@@ -623,7 +640,7 @@ html, body {
   flex-direction: column-reverse;
   align-items: center;
   gap: 6px;
-  z-index: 2000;
+  z-index: 3500;
   pointer-events: none;
   width: max-content;
   max-width: min(92vw, 520px);

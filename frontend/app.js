@@ -238,6 +238,19 @@ function writePWAState(state) {
   localStorage.setItem(PWA_STATE_KEY, JSON.stringify(state));
 }
 
+function showWelcomeError(msg) {
+  const el = document.getElementById('welcome-error');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function hideWelcomeError() {
+  const el = document.getElementById('welcome-error');
+  if (!el) return;
+  el.classList.add('hidden');
+}
+
 function showLocationBanner(msg) {
   const banner = document.getElementById('location-banner');
   const text = banner.querySelector('.banner-text');
@@ -540,7 +553,7 @@ function initSpaceUI() {
       const { slug } = await res.json();
       location.href = `/s/${slug}`;
     } catch {
-      showToast('Failed to create space');
+      showWelcomeError('Could not create space — check your internet connection.');
     }
   });
 
@@ -639,7 +652,7 @@ function initMenu() {
       const { slug } = await res.json();
       location.href = `/s/${slug}`;
     } catch {
-      showToast('Failed to create space');
+      showToast('Could not create space — check your internet connection.');
     }
   });
 
