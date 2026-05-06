@@ -373,16 +373,16 @@ async function handleLocate() {
     map.setView([result.lat, result.lng], CONFIG.DEFAULT_ZOOM, { animate: true });
     showUserPosition(result.lat, result.lng);
     hideLocationBanner();
-    localStorage.setItem('geo_pref', 'granted');
+    lsSet(GEO_PREF_KEY, 'granted');
   } else if (result.status === 'denied') {
-    localStorage.setItem('geo_pref', 'denied');
+    lsSet(GEO_PREF_KEY, 'denied');
     showLocationBanner('Location blocked — check browser settings to paint where you are.');
     showToast('Location blocked — check browser settings');
   } else if (result.status === 'timeout') {
-    localStorage.removeItem('geo_pref');
+    lsRemove(GEO_PREF_KEY);
     showToast('Location timed out — try again');
   } else if (result.status === 'unavailable') {
-    localStorage.setItem('geo_pref', 'skipped');
+    lsSet(GEO_PREF_KEY, 'skipped');
     showToast('Location unavailable on this device');
   } else {
     showToast('Location error');

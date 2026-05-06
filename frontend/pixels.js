@@ -1,4 +1,4 @@
-let _sessionId = localStorage.getItem('pixhood_session') || null;
+let _sessionId = lsGet('pixhood_session') || null;
 
 function getSessionId() {
   return _sessionId;
@@ -199,7 +199,7 @@ function _openWS() {
       if (msg.type === CONFIG.WS_TYPE_PONG) return;
       if (msg.type === CONFIG.WS_TYPE_SESSION) {
         _sessionId = msg.sessionId;
-        localStorage.setItem('pixhood_session', msg.sessionId);
+        lsSet('pixhood_session', msg.sessionId);
         return;
       }
       if (msg.type === CONFIG.WS_TYPE_PAINT_ACK) {

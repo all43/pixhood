@@ -1,7 +1,7 @@
 const ADMIN_TOKEN_KEY = 'admin_token';
 
 let _adminToken = sessionStorage.getItem(ADMIN_TOKEN_KEY);
-let _spaceAdminKey = CONFIG.SPACE ? localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE) : null;
+let _spaceAdminKey = CONFIG.SPACE ? lsGet(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE) : null;
 let _isAdminPanelOpen = false;
 let _inspectMode = false;
 let _activeRegionDraw = null;
@@ -264,7 +264,7 @@ async function adminFetch(path, options = {}) {
     _isAdminPanelOpen = false;
     document.body.classList.remove('admin-panel-open');
     if (_spaceAdminKey) {
-      localStorage.removeItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
+      lsRemove(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
       _spaceAdminKey = null;
       showToast('Admin key is invalid — it may have been revoked');
       return null;
@@ -415,7 +415,7 @@ document.getElementById('admin-region-btn').addEventListener('click', () => {
     sessionStorage.removeItem(ADMIN_TOKEN_KEY);
     _adminToken = null;
     if (CONFIG.SPACE && CONFIG.SPACE_KEY_PREFIX) {
-      localStorage.removeItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
+      lsRemove(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
       _spaceAdminKey = null;
       const manageBtn = document.getElementById('menu-btn-manage-space');
       if (manageBtn) manageBtn.classList.add('hidden');
@@ -913,7 +913,7 @@ function openSpaceAdminPanel() {
     document.body.classList.remove('admin-panel-open');
     return;
   }
-  _spaceAdminKey = localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
+  _spaceAdminKey = lsGet(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
   if (!_spaceAdminKey) {
     if (typeof showToast === 'function') showToast('Admin key not found for this space');
     return;

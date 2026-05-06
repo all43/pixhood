@@ -105,3 +105,8 @@ const CONFIG = {
   // Default color
   DEFAULT_COLOR: '#FF0000'
 };
+
+const GEO_PREF_KEY = 'geo_pref';
+function lsGet(key) { return localStorage.getItem(key); }
+function lsSet(key, value) { localStorage.setItem(key, value); }
+function lsRemove(key) { localStorage.removeItem(key); }

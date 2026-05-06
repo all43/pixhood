@@ -19,15 +19,13 @@ const _isMacSafari = /Macintosh/.test(navigator.userAgent) &&
 let _pwaDeferredEvent = null;
 
 const SELECTED_COLOR_KEY = 'selected_color';
-function lsGet(key) { return localStorage.getItem(key); }
-function lsSet(key, value) { localStorage.setItem(key, value); }
 
 function getStoredSpaceKey(slug) {
-  return localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + slug);
+  return lsGet(CONFIG.SPACE_KEY_PREFIX + slug);
 }
 
 function storeSpaceKey(slug, key) {
-  localStorage.setItem(CONFIG.SPACE_KEY_PREFIX + slug, key);
+  lsSet(CONFIG.SPACE_KEY_PREFIX + slug, key);
 }
 
 function showCreateSpaceConfirmModal() {
@@ -376,7 +374,7 @@ function readPWAState() {
     installed: false
   };
   try {
-    const raw = localStorage.getItem(PWA_STATE_KEY);
+    const raw = lsGet(PWA_STATE_KEY);
     if (!raw) return defaults;
     const parsed = JSON.parse(raw);
     return {
@@ -391,7 +389,7 @@ function readPWAState() {
 }
 
 function writePWAState(state) {
-  localStorage.setItem(PWA_STATE_KEY, JSON.stringify(state));
+  lsSet(PWA_STATE_KEY, JSON.stringify(state));
 }
 
 function showWelcomeError(msg) {
@@ -454,7 +452,7 @@ async function getGeolocation(timeout, opts) {
 
   const storedGeo = (() => {
     try {
-      const raw = localStorage.getItem(LAST_GEO_KEY);
+      const raw = lsGet(LAST_GEO_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (typeof parsed.lat !== 'number' || typeof parsed.lng !== 'number') return null;
@@ -532,23 +530,23 @@ function handleLocationResult(result) {
   switch (result.status) {
     case 'granted':
       showUserPosition(lat, lng);
-      localStorage.setItem(LAST_GEO_KEY, JSON.stringify({ lat, lng, savedAt: Date.now() }));
-      localStorage.setItem('geo_pref', 'granted');
+      lsSet(LAST_GEO_KEY, JSON.stringify({ lat, lng, savedAt: Date.now() }));
+      lsSet(GEO_PREF_KEY, 'granted');
       break;
     case 'skipped':
       showLocationBanner('Painting in Berlin. Tap the locate button in the bottom-right corner to use your location.');
       break;
     case 'denied':
       showLocationBanner('Location blocked — check browser settings to paint where you are.');
-      localStorage.setItem('geo_pref', 'denied');
+      lsSet(GEO_PREF_KEY, 'denied');
       break;
     case 'unavailable':
       showToast('Location unavailable — showing Berlin');
-      localStorage.setItem('geo_pref', 'skipped');
+      lsSet(GEO_PREF_KEY, 'skipped');
       break;
     case 'timeout':
       showLocationBanner('Location timed out — tap the locate button to retry.');
-      localStorage.removeItem('geo_pref');
+      lsRemove(GEO_PREF_KEY);
       break;
     default:
       showToast('Location error — showing Berlin');
@@ -920,7 +918,7 @@ async function init() {
 
   if (CONFIG.SPACE) {
     initSpaceIndicator();
-    const pref = localStorage.getItem('geo_pref');
+    const pref = lsGet(GEO_PREF_KEY);
     if (pref === 'denied') {
       await proceedToMap({ status: 'denied' }, geoPromise);
     } else if (pref === 'granted' || pref === 'skipped') {
@@ -934,7 +932,7 @@ async function init() {
     return;
   }
 
-  const pref = localStorage.getItem('geo_pref');
+  const pref = lsGet(GEO_PREF_KEY);
 
   const makeInitialPromise = (lat, lng) => {
     const vb = {
@@ -962,7 +960,7 @@ async function init() {
     // handles it correctly: returns silently if still granted, or shows the native
     // dialog again. No reason to clear geo_pref or show our welcome screen.
     if (permState === 'denied') {
-      localStorage.setItem('geo_pref', 'denied');
+      lsSet(GEO_PREF_KEY, 'denied');
       await proceedToMap({ status: 'denied' }, geoPromise);
       return;
     } else {
@@ -973,10 +971,10 @@ async function init() {
         const lng = result.lng || CONFIG.DEFAULT_LNG;
         await proceedToMap(result, makeInitialPromise(lat, lng));
       } else if (result.status === 'denied') {
-        localStorage.setItem('geo_pref', 'denied');
+        lsSet(GEO_PREF_KEY, 'denied');
         await proceedToMap({ status: 'denied' }, geoPromise);
       } else {
-        localStorage.removeItem('geo_pref');
+        lsRemove(GEO_PREF_KEY);
         await proceedToMap({ status: 'timeout' }, geoPromise);
       }
       return;
@@ -1001,16 +999,16 @@ async function init() {
       const lng = result.lng || CONFIG.DEFAULT_LNG;
       await proceedToMap(result, makeInitialPromise(lat, lng));
     } else if (result.status === 'denied') {
-      localStorage.setItem('geo_pref', 'denied');
+      lsSet(GEO_PREF_KEY, 'denied');
       await proceedToMap({ status: 'denied' }, geoPromise);
     } else {
-      localStorage.removeItem('geo_pref');
+      lsRemove(GEO_PREF_KEY);
       await proceedToMap({ status: 'timeout' }, geoPromise);
     }
   });
 
   document.getElementById('btn-skip-geo').addEventListener('click', async () => {
-    localStorage.setItem('geo_pref', 'skipped');
+    lsSet(GEO_PREF_KEY, 'skipped');
     await proceedToMap({ status: 'skipped' }, geoPromise);
   });
 }
@@ -1019,7 +1017,7 @@ async function initPWAInstallPrompt(map) {
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   if (isStandalone || !('serviceWorker' in navigator)) return;
 
-  localStorage.removeItem('pwaPrompted');
+  lsRemove('pwaPrompted');
 
   if (navigator.getInstalledRelatedApps) {
     const apps = await navigator.getInstalledRelatedApps();
