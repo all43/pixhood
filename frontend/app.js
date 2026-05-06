@@ -18,6 +18,10 @@ const _isMacSafari = /Macintosh/.test(navigator.userAgent) &&
   !/Chrome|Chromium|Edg\/|OPR\//.test(navigator.userAgent);
 let _pwaDeferredEvent = null;
 
+const SELECTED_COLOR_KEY = 'selected_color';
+function lsGet(key) { return localStorage.getItem(key); }
+function lsSet(key, value) { localStorage.setItem(key, value); }
+
 function getStoredSpaceKey(slug) {
   return localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + slug);
 }
@@ -171,6 +175,7 @@ function getSelectedColor() {
 
 function selectColor(color) {
   selectedColor = color;
+  lsSet(SELECTED_COLOR_KEY, color);
   document.querySelectorAll('.swatch').forEach(s => {
     s.classList.toggle('selected', s.dataset.color === color);
   });
@@ -205,6 +210,8 @@ function initColorPicker() {
     palette.appendChild(swatch);
   });
 
+  const stored = lsGet(SELECTED_COLOR_KEY);
+  if (stored) selectedColor = stored;
   if (!CONFIG.PALETTE.includes(selectedColor) && selectedColor !== CONFIG.ERASE_COLOR) {
     selectedColor = CONFIG.DEFAULT_COLOR;
   }
