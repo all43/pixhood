@@ -142,6 +142,24 @@ function _flushPending() {
   if (count > 0 && _onPaintError) _onPaintError('disconnect', count);
 }
 
+function disconnectWebSocket() {
+  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  _stopHeartbeat();
+  _flushPending();
+  if (_ws) {
+    _ws.onopen = null;
+    _ws.onmessage = null;
+    _ws.onclose = null;
+    _ws.onerror = null;
+    if (_ws.readyState === 0 || _ws.readyState === 1) {
+      _ws.close();
+    }
+    _ws = null;
+  }
+}
+
+window.addEventListener('pagehide', disconnectWebSocket);
+
 function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked, onStatusChange, onRegionsChanged) {
   _onPixel = onPixel;
   _onChild = onChild || null;

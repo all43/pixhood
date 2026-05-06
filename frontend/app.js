@@ -28,6 +28,11 @@ function storeSpaceKey(slug, key) {
   lsSet(CONFIG.SPACE_KEY_PREFIX + slug, key);
 }
 
+function navigateTo(url) {
+  if (typeof disconnectWebSocket === 'function') disconnectWebSocket();
+  location.href = url;
+}
+
 async function requestGeoAndProceed(fallbackPromise, timeout) {
   showSpinnerScreen('Waiting for location\u2026');
   const result = await getGeolocation(timeout);
@@ -101,7 +106,7 @@ function showCreateSpaceConfirmModal() {
       if (key) {
         showSpaceKeyModal(slug, key);
       } else {
-        location.href = `/s/${slug}`;
+        navigateTo(`/s/${slug}`);
       }
     } catch {
       errEl.textContent = 'Could not create space \u2014 check your internet connection.';
@@ -193,7 +198,7 @@ function showSpaceKeyModal(slug, key) {
   goBtn.addEventListener('click', () => {
     if (goBtn.disabled) return;
     storeSpaceKey(slug, key);
-    location.href = `/s/${slug}`;
+    navigateTo(`/s/${slug}`);
   });
 }
 
@@ -750,7 +755,7 @@ function initSpaceUI() {
     const val = document.getElementById('join-space-input').value.trim();
     const slug = parseSpaceSlug(val);
     if (slug) {
-      location.href = `/s/${slug}`;
+      navigateTo(`/s/${slug}`);
     } else {
       showToast('Invalid space code or link');
     }
@@ -803,7 +808,7 @@ function initSpaceIndicator() {
   const leaveBtn = document.getElementById('menu-btn-leave-space');
   if (leaveBtn) {
     leaveBtn.addEventListener('click', () => {
-      location.href = '/';
+      navigateTo('/');
     });
   }
 }
@@ -876,7 +881,7 @@ function initMenu() {
     const val = joinInput.value.trim();
     const slug = parseSpaceSlug(val);
     if (slug) {
-      location.href = `/s/${slug}`;
+      navigateTo(`/s/${slug}`);
     } else {
       showToast('Invalid space code or link');
     }
