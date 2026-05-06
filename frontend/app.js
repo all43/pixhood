@@ -1,6 +1,7 @@
 let selectedColor = CONFIG.DEFAULT_COLOR;
 let slowHintTimer = null;
 let _refreshTimer = null;
+let _hasConnectedOnce = false;
 let _undoCount = 0;
 let _undoTimer = null;
 let _undoToastItem = null;
@@ -624,11 +625,11 @@ function onWSBlocked() {
   scheduleViewportRefresh();
 }
 
-async function refreshViewport() {
+async function refreshViewport(force) {
   const vb = getViewportBounds();
   const zoom = getCurrentZoom();
 
-  if (!needsRefetch(vb)) {
+  if (!force && !needsRefetch(vb)) {
     updateBoundaryVisualization();
     return;
   }
@@ -672,6 +673,12 @@ async function proceedToMap(geoResult, pixelsPromise) {
   connectWebSocket(onWSPixel, onWSChild, onWSDelete, onPaintError, onWSBlocked, (status) => {
     if (status === 'disconnected') {
       showToast('Connection lost — reconnecting\u2026');
+    } else if (status === 'connected') {
+      if (!_hasConnectedOnce) {
+        _hasConnectedOnce = true;
+      } else {
+        refreshViewport(true);
+      }
     }
   }, onRegionsChanged);
 
