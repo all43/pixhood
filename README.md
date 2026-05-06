@@ -12,9 +12,6 @@
 
 ![Map view with painted pixels](docs/screenshots/home_mobile.png)
 
-<!-- TODO: sub-grid zoom (level 21+) -->
-<!-- TODO: color picker + welcome screen -->
-
 ---
 
 ## What it does
@@ -24,8 +21,13 @@
 - Pick a color, click anywhere on the map → paint a pixel tied to real-world coordinates
 - Everyone sees each other's paintings in real time via WebSocket
 - Zoom in past zoom 21 → each pixel reveals a 16×16 sub-grid for detailed art
+- Undo your last paint or erase a pixel you placed
 - All pixels expire after 24h — canvas resets daily, no moderation needed
-- Works on desktop and mobile Safari/Chrome
+- Works on desktop and mobile Safari/Chrome (installable PWA)
+
+### Spaces
+
+Create a private Space (`/s/<slug>`) — an isolated canvas with its own URL. Share the link with a group; paintings don't cross between spaces or the global canvas. Space admins get an HMAC-derived key that unlocks an admin panel for drawing protected regions and bulk-erasing areas.
 
 ---
 
@@ -50,6 +52,14 @@ Handles Safari one-time grants (permission state `"prompt"` after expiry), Chrom
 ### Installable PWA
 
 Ships as a Progressive Web App — add to home screen for a fullscreen experience with its own icon. Vanilla JS with Leaflet.js (CDN), no framework. A lightweight build script hashes assets and generates the service worker manifest; no bundler needed.
+
+### Suspicion and auto-revert
+
+Server-side rate limiting per session and IP. Suspicious patterns (burst painting, teleporting across large distances) flag a session; after enough flags within a window the session's recent paints are automatically reverted.
+
+### Protected regions
+
+Admins can draw a bounding-box region to protect — protected tiles block all painting. Region outlines are traced as directed-edge polygons and rendered as overlays.
 
 ---
 
@@ -123,6 +133,8 @@ Sessions are anonymous and server-generated — a `sess_<hex>` ID stored in `loc
 | `pixel:<tileKey>` | String | 24h | Parent pixel JSON |
 | `subpixels:<tileKey>` | Hash | 24h | Child pixels: field=`subX_subY`, value=JSON |
 | `pixels:geo` | Sorted Set | — | GEOADD/GEOSEARCH for viewport queries |
+| `space:<slug>` | String | — | Space metadata |
+| `protected:<tileKey>` | String | — | Protected tile marker |
 
 ---
 
@@ -132,12 +144,16 @@ Sessions are anonymous and server-generated — a `sess_<hex>` ID stored in `loc
 pixhood/
 ├── frontend/          # Static frontend (Cloudflare Pages)
 │   ├── index.html     # Entry point, loads Leaflet CDN + app scripts
+│   ├── about.html     # About page (build date, links)
+│   ├── privacy.html   # Privacy policy
 │   ├── style.css
 │   ├── config.js      # Constants: API_URL, WS_URL, TILE_SIZE_M, Mercator projection, palette
 │   ├── grid.js        # Tile + sub-tile key computation, snapToTile(), snapToSubTile()
-│   ├── pixels.js      # Viewport fetch, child pixel write, WebSocket + heartbeat
-│   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering
+│   ├── pixels.js      # Viewport fetch, WebSocket + heartbeat, undo log
+│   ├── map.js         # Leaflet map init, renderPixel(), sub-grid rendering, region overlays
 │   ├── app.js         # Bootstrap: geolocation, color picker, viewport refresh wiring
+│   ├── admin.js       # Admin panel: protected region draw, bulk erase, sign-in
+│   ├── admin.css
 │   ├── favicon.svg
 │   ├── build.js       # Build script: hashes files, generates SW
 │   ├── wrangler.toml  # Cloudflare Pages configuration
@@ -151,8 +167,12 @@ pixhood/
 │   │   └── generate-icons.js
 │   └── dist/          # Build output (gitignored)
 ├── server/            # Backend API (Fly.io)
-│   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
+│   ├── index.js       # HTTP + WebSocket server, all API routes
 │   ├── redis.js       # Redis client, geo-indexed queries, TTL management
+│   ├── suspicion.js   # Rate limiting and auto-revert logic
+│   ├── shared/
+│   │   ├── space.js       # Space slug constants (shared with frontend)
+│   │   └── ws-types.js    # WebSocket message type constants
 │   ├── fly.toml       # Fly.io configuration
 │   ├── Dockerfile
 │   └── package.json
@@ -179,7 +199,7 @@ npm run deploy
 
 ---
 
-## Limitations & future work
+## Limitations
 
 - **Single machine** — WebSocket state is in-memory; scaling requires Redis pub/sub between machines
 - **No accounts** — anonymous sessions only, no pixel ownership
