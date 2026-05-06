@@ -28,9 +28,29 @@ function storeSpaceKey(slug, key) {
   lsSet(CONFIG.SPACE_KEY_PREFIX + slug, key);
 }
 
+async function requestGeoAndProceed(fallbackPromise, timeout) {
+  showSpinnerScreen('Waiting for location\u2026');
+  const result = await getGeolocation(timeout);
+  if (result.status === 'granted') {
+    const lat = result.lat || CONFIG.DEFAULT_LAT;
+    const lng = result.lng || CONFIG.DEFAULT_LNG;
+    const vb = { n: lat + CONFIG.INIT_VIEWPORT_SPAN, s: lat - CONFIG.INIT_VIEWPORT_SPAN,
+                 e: lng + CONFIG.INIT_VIEWPORT_SPAN, w: lng - CONFIG.INIT_VIEWPORT_SPAN };
+    await proceedToMap(result, loadViewport(vb, CONFIG.DEFAULT_ZOOM));
+  } else if (result.status === 'denied') {
+    lsSet(GEO_PREF_KEY, 'denied');
+    await proceedToMap(result, fallbackPromise);
+  } else {
+    lsRemove(GEO_PREF_KEY);
+    await proceedToMap(result, fallbackPromise);
+  }
+}
+
 function showCreateSpaceConfirmModal() {
   const existing = document.getElementById('create-space-modal');
   if (existing) existing.remove();
+
+  const needsGeoPref = !lsGet(GEO_PREF_KEY);
 
   const overlay = document.createElement('div');
   overlay.id = 'create-space-modal';
@@ -42,6 +62,12 @@ function showCreateSpaceConfirmModal() {
         <p>As the creator, you get extra controls: protect artwork from being overwritten, extend how long it lasts, and erase unwanted pixels.</p>
         <p>The Space link is the only way in. Share it only with people you want to paint with — anyone with the link can join. If the link gets out, simply abandon this Space and create a new one.</p>
       </div>
+      ${needsGeoPref ? `
+      <label class="create-space-geo-label">
+        <input type="checkbox" id="create-space-geo" checked />
+        Share my location
+      </label>
+      ` : ''}
       <div id="create-space-error" class="hidden"></div>
       <div class="create-space-buttons">
         <button class="create-space-cancel" id="create-space-cancel">Cancel</button>
@@ -67,6 +93,10 @@ function showCreateSpaceConfirmModal() {
       const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
       if (!res.ok) throw new Error(res.status);
       const { slug, key } = await res.json();
+      const geoCheckbox = document.getElementById('create-space-geo');
+      if (geoCheckbox) {
+        lsSet(GEO_PREF_KEY, geoCheckbox.checked ? 'granted' : 'skipped');
+      }
       overlay.remove();
       if (key) {
         showSpaceKeyModal(slug, key);
@@ -911,37 +941,20 @@ async function init() {
   initSpaceUI();
   initMenu();
 
+  if (CONFIG.SPACE) {
+    initSpaceIndicator();
+    document.getElementById('welcome-intro').textContent =
+      "You've been invited to paint on a map in a private Space \u2014 only people with the link can see and paint here.";
+    document.getElementById('welcome-divider').classList.add('hidden');
+    document.getElementById('welcome-space-buttons').classList.add('hidden');
+  }
+
   const geoPromise = (async () => {
     const vb = { n: CONFIG.DEFAULT_LAT + CONFIG.INIT_VIEWPORT_SPAN, s: CONFIG.DEFAULT_LAT - CONFIG.INIT_VIEWPORT_SPAN, e: CONFIG.DEFAULT_LNG + CONFIG.INIT_VIEWPORT_SPAN, w: CONFIG.DEFAULT_LNG - CONFIG.INIT_VIEWPORT_SPAN };
     return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
   })();
 
-  if (CONFIG.SPACE) {
-    initSpaceIndicator();
-    const pref = lsGet(GEO_PREF_KEY);
-    if (pref === 'denied') {
-      await proceedToMap({ status: 'denied' }, geoPromise);
-    } else if (pref === 'granted' || pref === 'skipped') {
-      await proceedToMap({ status: pref }, geoPromise);
-    } else {
-      showSpinnerScreen('Waiting for location\u2026');
-      const result = await getGeolocation(CONFIG.GEO_GRANTED_TIMEOUT);
-      await proceedToMap(result, geoPromise);
-    }
-    return;
-  }
-
   const pref = lsGet(GEO_PREF_KEY);
-
-  const makeInitialPromise = (lat, lng) => {
-    const vb = {
-      n: lat + CONFIG.INIT_VIEWPORT_SPAN,
-      s: lat - CONFIG.INIT_VIEWPORT_SPAN,
-      e: lng + CONFIG.INIT_VIEWPORT_SPAN,
-      w: lng - CONFIG.INIT_VIEWPORT_SPAN
-    };
-    return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
-  };
 
   if (pref === 'granted') {
     let permState = 'granted';
@@ -951,33 +964,14 @@ async function init() {
     } catch {
     }
 
-    // geo_pref='granted' means the user said yes at least once. We only short-circuit
-    // on explicit 'denied' — where calling getCurrentPosition would definitely fail.
-    // 'prompt' doesn't mean the user changed their mind: it could be an expired
-    // Safari day-grant or an iOS WebKit bug where the API always returns 'prompt'
-    // regardless of the actual system permission. In either case getCurrentPosition
-    // handles it correctly: returns silently if still granted, or shows the native
-    // dialog again. No reason to clear geo_pref or show our welcome screen.
     if (permState === 'denied') {
       lsSet(GEO_PREF_KEY, 'denied');
       await proceedToMap({ status: 'denied' }, geoPromise);
       return;
-    } else {
-      showSpinnerScreen('Waiting for location\u2026');
-      const result = await getGeolocation(CONFIG.GEO_GRANTED_TIMEOUT);
-      if (result.status === 'granted') {
-        const lat = result.lat || CONFIG.DEFAULT_LAT;
-        const lng = result.lng || CONFIG.DEFAULT_LNG;
-        await proceedToMap(result, makeInitialPromise(lat, lng));
-      } else if (result.status === 'denied') {
-        lsSet(GEO_PREF_KEY, 'denied');
-        await proceedToMap({ status: 'denied' }, geoPromise);
-      } else {
-        lsRemove(GEO_PREF_KEY);
-        await proceedToMap({ status: 'timeout' }, geoPromise);
-      }
-      return;
     }
+
+    await requestGeoAndProceed(geoPromise, CONFIG.GEO_GRANTED_TIMEOUT);
+    return;
   }
 
   if (pref === 'skipped') {
@@ -991,19 +985,7 @@ async function init() {
   }
 
   document.getElementById('btn-enable-geo').addEventListener('click', async () => {
-    showSpinnerScreen('Waiting for location\u2026');
-    const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT);
-    if (result.status === 'granted') {
-      const lat = result.lat || CONFIG.DEFAULT_LAT;
-      const lng = result.lng || CONFIG.DEFAULT_LNG;
-      await proceedToMap(result, makeInitialPromise(lat, lng));
-    } else if (result.status === 'denied') {
-      lsSet(GEO_PREF_KEY, 'denied');
-      await proceedToMap({ status: 'denied' }, geoPromise);
-    } else {
-      lsRemove(GEO_PREF_KEY);
-      await proceedToMap({ status: 'timeout' }, geoPromise);
-    }
+    await requestGeoAndProceed(geoPromise, CONFIG.GEO_DEFAULT_TIMEOUT);
   });
 
   document.getElementById('btn-skip-geo').addEventListener('click', async () => {
