@@ -926,7 +926,6 @@ async function init() {
     } else {
       showSpinnerScreen('Waiting for location\u2026');
       const result = await getGeolocation(CONFIG.GEO_GRANTED_TIMEOUT);
-      handleLocationResult(result);
       await proceedToMap(result, geoPromise);
     }
     return;
