@@ -9,10 +9,10 @@ let _activeRegionDraw = null;
 const REGION_MODES = {
   erase: {
     btnId: 'admin-region-btn',
-    infoId: 'admin-region-info',
-    defaultLabel: 'Erase Region',
-    activeLabel: 'Cancel Selection',
-    hint: 'Click and drag on the map to select a region',
+    infoId: 'admin-mode-info',
+    defaultLabel: 'Erase',
+    activeLabel: 'Cancel',
+    hint: 'Drag on the map to select a region',
     rectStyle: { color: '#e94560', fillColor: '#e94560', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
     confirmText: 'Erase all pixels in this region?',
     loadingText: 'Erasing...',
@@ -25,10 +25,10 @@ const REGION_MODES = {
   },
   protect: {
     btnId: 'admin-protect-btn',
-    infoId: 'admin-protect-info',
-    defaultLabel: 'Protect Region',
+    infoId: 'admin-mode-info',
+    defaultLabel: 'Protect',
     activeLabel: 'Cancel',
-    hint: 'Click and drag on the map to select a region to protect',
+    hint: 'Drag on the map to select a region to protect',
     rectStyle: { color: '#FFD700', fillColor: '#FFD700', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
     confirmText: 'Protect all tiles in this region? This will block painting on empty and painted tiles.',
     loadingText: 'Protecting...',
@@ -42,10 +42,10 @@ const REGION_MODES = {
   },
   extend: {
     btnId: 'admin-extend-ttl-btn',
-    infoId: 'admin-extend-ttl-info',
-    defaultLabel: 'Extend TTL',
+    infoId: 'admin-mode-info',
+    defaultLabel: 'Extend',
     activeLabel: 'Cancel',
-    hint: 'Click and drag on the map to select a region to extend TTL (30 days)',
+    hint: 'Drag on the map to select a region to extend TTL <span class="admin-hint-detail">(30 days)</span>',
     rectStyle: { color: 'rgba(100,150,255,0.8)', fillColor: 'rgba(100,150,255,0.15)', fillOpacity: 0.15, weight: 2, dashArray: '6 4', interactive: false },
     confirmText: 'Extend TTL to 30 days for all pixels in this region?',
     loadingText: 'Extending TTL...',
@@ -62,9 +62,24 @@ const REGION_MODES = {
 let _regionDrawStart = null;
 let _regionDrawRect = null;
 
+function collapseAdminPanel() {
+  const panel = document.getElementById('admin-panel');
+  if (panel) {
+    panel.classList.remove('admin-panel-expanded');
+    const btn = document.getElementById('admin-toggle-expand');
+    if (btn) btn.textContent = '⋯';
+  }
+}
+
+function resetModeInfo() {
+  const info = document.getElementById('admin-mode-info');
+  if (info) info.innerHTML = 'Select a tool or ⋯ for more';
+}
+
 function activateRegionMode(modeKey) {
   if (_activeRegionDraw) deactivateRegionMode();
   if (_inspectMode) disableInspectMode();
+  collapseAdminPanel();
 
   const mode = REGION_MODES[modeKey];
   _activeRegionDraw = modeKey;
@@ -73,16 +88,20 @@ function activateRegionMode(modeKey) {
   const info = document.getElementById(mode.infoId);
   btn.textContent = mode.activeLabel;
   btn.classList.add('active');
-  info.textContent = mode.hint;
+  info.innerHTML = mode.hint;
 
   const mapEl = document.getElementById('map');
   mapEl.classList.add('region-select-mode');
 
   if (typeof map !== 'undefined') {
     map.dragging.disable();
-    map.getContainer().addEventListener('mousedown', onRegionDrawStart);
-    map.getContainer().addEventListener('mousemove', onRegionDrawMove);
-    map.getContainer().addEventListener('mouseup', onRegionDrawEnd);
+    const c = map.getContainer();
+    c.addEventListener('mousedown', onRegionDrawStart);
+    c.addEventListener('mousemove', onRegionDrawMove);
+    c.addEventListener('mouseup', onRegionDrawEnd);
+    c.addEventListener('touchstart', onRegionDrawTouchStart, { passive: false });
+    c.addEventListener('touchmove', onRegionDrawTouchMove, { passive: false });
+    c.addEventListener('touchend', onRegionDrawTouchEnd, { passive: false });
   }
 }
 
@@ -92,19 +111,22 @@ function deactivateRegionMode() {
   _activeRegionDraw = null;
 
   const btn = document.getElementById(mode.btnId);
-  const info = document.getElementById(mode.infoId);
   btn.textContent = mode.defaultLabel;
   btn.classList.remove('active');
-  info.textContent = '';
+  resetModeInfo();
 
   const mapEl = document.getElementById('map');
   mapEl.classList.remove('region-select-mode');
 
   if (typeof map !== 'undefined') {
     map.dragging.enable();
-    map.getContainer().removeEventListener('mousedown', onRegionDrawStart);
-    map.getContainer().removeEventListener('mousemove', onRegionDrawMove);
-    map.getContainer().removeEventListener('mouseup', onRegionDrawEnd);
+    const c = map.getContainer();
+    c.removeEventListener('mousedown', onRegionDrawStart);
+    c.removeEventListener('mousemove', onRegionDrawMove);
+    c.removeEventListener('mouseup', onRegionDrawEnd);
+    c.removeEventListener('touchstart', onRegionDrawTouchStart);
+    c.removeEventListener('touchmove', onRegionDrawTouchMove);
+    c.removeEventListener('touchend', onRegionDrawTouchEnd);
   }
 
   if (_regionDrawRect) {
@@ -134,13 +156,37 @@ function onRegionDrawMove(e) {
   }
 }
 
-async function onRegionDrawEnd(e) {
-  if (!_activeRegionDraw || !_regionDrawStart || typeof map === 'undefined') return;
-  const mode = REGION_MODES[_activeRegionDraw];
-  const end = map.mouseEventToLatLng(e);
-  const bounds = L.latLngBounds(_regionDrawStart, end);
-  _regionDrawStart = null;
+function _touchToLatLng(e) {
+  const t = e.touches && e.touches.length ? e.touches[0] : e.changedTouches[0];
+  const rect = map.getContainer().getBoundingClientRect();
+  return map.containerPointToLatLng(L.point(t.clientX - rect.left, t.clientY - rect.top));
+}
 
+function onRegionDrawTouchStart(e) {
+  e.preventDefault();
+  if (!_activeRegionDraw || typeof map === 'undefined') return;
+  _regionDrawStart = _touchToLatLng(e);
+  if (_regionDrawRect) {
+    map.removeLayer(_regionDrawRect);
+    _regionDrawRect = null;
+  }
+}
+
+function onRegionDrawTouchMove(e) {
+  e.preventDefault();
+  if (!_activeRegionDraw || !_regionDrawStart || typeof map === 'undefined') return;
+  const end = _touchToLatLng(e);
+  const bounds = L.latLngBounds(_regionDrawStart, end);
+  const mode = REGION_MODES[_activeRegionDraw];
+  if (_regionDrawRect) {
+    _regionDrawRect.setBounds(bounds);
+  } else {
+    _regionDrawRect = L.rectangle(bounds, mode.rectStyle).addTo(map);
+  }
+}
+
+function _finishRegionDraw(bounds) {
+  const mode = REGION_MODES[_activeRegionDraw];
   const n = bounds.getNorth();
   const s = bounds.getSouth();
   const eLng = bounds.getEast();
@@ -150,26 +196,42 @@ async function onRegionDrawEnd(e) {
   info.textContent = `Selected: ${((n - s) * 111).toFixed(0)}m × ${(((eLng - w) * 111 * Math.cos((n + s) / 2 * Math.PI / 180))).toFixed(0)}m`;
 
   if (!confirm(mode.confirmText)) {
-    info.textContent = 'Cancelled';
+    resetModeInfo();
     return;
   }
 
   info.textContent = mode.loadingText;
 
-  try {
-    const res = await mode.makeRequest(n, s, eLng, w);
+  mode.makeRequest(n, s, eLng, w).then(res => {
     if (res && res.ok) {
-      const data = await res.json();
-      info.textContent = mode.formatResult(data);
-      if (typeof refreshViewport === 'function') refreshViewport();
-    } else {
-      info.textContent = mode.failText;
+      return res.json().then(data => {
+        info.textContent = mode.formatResult(data);
+        if (typeof refreshViewport === 'function') refreshViewport();
+      });
     }
-  } catch {
     info.textContent = mode.failText;
-  }
+  }).catch(() => {
+    info.textContent = mode.failText;
+  }).finally(() => {
+    deactivateRegionMode();
+  });
+}
 
-  deactivateRegionMode();
+function onRegionDrawEnd(e) {
+  if (!_activeRegionDraw || !_regionDrawStart || typeof map === 'undefined') return;
+  const end = map.mouseEventToLatLng(e);
+  const bounds = L.latLngBounds(_regionDrawStart, end);
+  _regionDrawStart = null;
+  _finishRegionDraw(bounds);
+}
+
+function onRegionDrawTouchEnd(e) {
+  e.preventDefault();
+  if (!_activeRegionDraw || !_regionDrawStart || typeof map === 'undefined') return;
+  const end = _touchToLatLng(e);
+  const bounds = L.latLngBounds(_regionDrawStart, end);
+  _regionDrawStart = null;
+  _finishRegionDraw(bounds);
 }
 
 function escapeHtml(str) {
@@ -200,6 +262,7 @@ async function adminFetch(path, options = {}) {
     const panel = document.getElementById('admin-panel');
     if (panel) panel.remove();
     _isAdminPanelOpen = false;
+    document.body.classList.remove('admin-panel-open');
     if (_spaceAdminKey) {
       localStorage.removeItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
       _spaceAdminKey = null;
@@ -216,6 +279,7 @@ async function adminFetch(path, options = {}) {
     const panel = document.getElementById('admin-panel');
     if (panel) panel.remove();
     _isAdminPanelOpen = false;
+    document.body.classList.remove('admin-panel-open');
     if (_spaceAdminKey) {
       showToast(`Too many failed attempts. Try again in ${data.retryAfter || 900}s`);
       return null;
@@ -281,22 +345,21 @@ function createAdminPanel() {
       <div id="admin-session-detail" class="admin-list"></div>
     </div>`;
   panel.innerHTML = `
+    <div class="admin-bottom-handle"><span></span></div>
     <div class="admin-header">
       <span class="admin-title">${title}</span>
       <button class="admin-close" id="admin-close">&times;</button>
     </div>
-    <div class="admin-section">
+    <div class="admin-section admin-section-tools">
       <h3>Tools</h3>
       <div class="admin-tools">
-        <button class="admin-btn" id="admin-inspect-btn">Inspect Pixels</button>
-        <button class="admin-btn admin-btn-protect" id="admin-protect-btn">Protect Region</button>
-        <button class="admin-btn admin-btn-extend" id="admin-extend-ttl-btn">Extend TTL</button>
-        <button class="admin-btn admin-btn-danger" id="admin-region-btn">Erase Region</button>
+        <button class="admin-btn" id="admin-inspect-btn">Inspect</button>
+        <button class="admin-btn admin-btn-protect" id="admin-protect-btn">Protect</button>
+        <button class="admin-btn admin-btn-extend" id="admin-extend-ttl-btn">Extend</button>
+        <button class="admin-btn admin-btn-danger" id="admin-region-btn">Erase</button>
+        <button class="admin-btn admin-toggle-expand" id="admin-toggle-expand">⋯</button>
       </div>
-      <div id="admin-inspect-info" class="admin-mode-info"></div>
-      <div id="admin-protect-info" class="admin-mode-info"></div>
-      <div id="admin-extend-ttl-info" class="admin-mode-info"></div>
-      <div id="admin-region-info" class="admin-mode-info"></div>
+      <div id="admin-mode-info" class="admin-mode-info">Select a tool or ⋯ for more</div>
     </div>
     <div class="admin-section">
       <h3>Protected Regions</h3>
@@ -309,10 +372,21 @@ function createAdminPanel() {
     </div>
   `;
   document.body.appendChild(panel);
+  document.body.classList.add('admin-panel-open');
+
+  const toggleExpand = document.getElementById('admin-toggle-expand');
+  const bottomHandle = panel.querySelector('.admin-bottom-handle');
+  const togglePanelExpand = () => {
+    panel.classList.toggle('admin-panel-expanded');
+    if (toggleExpand) toggleExpand.textContent = panel.classList.contains('admin-panel-expanded') ? '▾' : '⋯';
+  };
+  if (toggleExpand) toggleExpand.addEventListener('click', togglePanelExpand);
+  if (bottomHandle) bottomHandle.addEventListener('click', togglePanelExpand);
 
   document.getElementById('admin-close').addEventListener('click', () => {
     panel.remove();
     _isAdminPanelOpen = false;
+    document.body.classList.remove('admin-panel-open');
     disableInspectMode();
     if (_activeRegionDraw) deactivateRegionMode();
   });
@@ -348,6 +422,7 @@ document.getElementById('admin-region-btn').addEventListener('click', () => {
     }
     panel.remove();
     _isAdminPanelOpen = false;
+    document.body.classList.remove('admin-panel-open');
     disableInspectMode();
     if (_activeRegionDraw) deactivateRegionMode();
   });
@@ -632,14 +707,15 @@ async function lookupSession() {
 function toggleInspectMode() {
   _inspectMode = !_inspectMode;
   const btn = document.getElementById('admin-inspect-btn');
-  const info = document.getElementById('admin-inspect-info');
+  const info = document.getElementById('admin-mode-info');
   const mapEl = document.getElementById('map');
 
   if (_inspectMode) {
     if (_activeRegionDraw) deactivateRegionMode();
-    btn.textContent = 'Exit Inspect';
+    collapseAdminPanel();
+    btn.textContent = 'Cancel';
     btn.classList.add('active');
-    info.textContent = 'Click a pixel to see who painted it';
+    info.textContent = 'Tap a pixel to see who painted it';
     mapEl.classList.add('inspect-mode');
     if (typeof map !== 'undefined') {
       map.on('click', onInspectClick);
@@ -652,16 +728,15 @@ function toggleInspectMode() {
 function disableInspectMode() {
   _inspectMode = false;
   const btn = document.getElementById('admin-inspect-btn');
-  const info = document.getElementById('admin-inspect-info');
   const mapEl = document.getElementById('map');
-  if (btn) { btn.textContent = 'Inspect Pixels'; btn.classList.remove('active'); }
-  if (info) info.textContent = '';
+  if (btn) { btn.textContent = 'Inspect'; btn.classList.remove('active'); }
   if (mapEl) mapEl.classList.remove('inspect-mode');
   if (typeof map !== 'undefined') {
     map.off('click', onInspectClick);
   }
   const popup = document.getElementById('admin-pixel-popup');
   if (popup) popup.remove();
+  resetModeInfo();
 }
 
 function onInspectClick(e) {
@@ -835,6 +910,7 @@ function openSpaceAdminPanel() {
     disableInspectMode();
     if (_activeRegionDraw) deactivateRegionMode();
     _isAdminPanelOpen = false;
+    document.body.classList.remove('admin-panel-open');
     return;
   }
   _spaceAdminKey = localStorage.getItem(CONFIG.SPACE_KEY_PREFIX + CONFIG.SPACE);
