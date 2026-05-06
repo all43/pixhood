@@ -33,6 +33,15 @@ function navigateTo(url) {
   location.href = url;
 }
 
+function handleJoin(val) {
+  const slug = parseSpaceSlug(val);
+  if (slug) {
+    navigateTo(`/s/${slug}`);
+  } else {
+    showToast('Invalid space code or link');
+  }
+}
+
 async function requestGeoAndProceed(fallbackPromise, timeout) {
   showSpinnerScreen('Waiting for location\u2026');
   const result = await getGeolocation(timeout);
@@ -752,13 +761,7 @@ function initSpaceUI() {
   });
 
   document.getElementById('btn-join-go').addEventListener('click', () => {
-    const val = document.getElementById('join-space-input').value.trim();
-    const slug = parseSpaceSlug(val);
-    if (slug) {
-      navigateTo(`/s/${slug}`);
-    } else {
-      showToast('Invalid space code or link');
-    }
+    handleJoin(document.getElementById('join-space-input').value.trim());
   });
 
   document.getElementById('btn-join-back').addEventListener('click', () => {
@@ -878,13 +881,7 @@ function initMenu() {
   });
 
   joinGo.addEventListener('click', () => {
-    const val = joinInput.value.trim();
-    const slug = parseSpaceSlug(val);
-    if (slug) {
-      navigateTo(`/s/${slug}`);
-    } else {
-      showToast('Invalid space code or link');
-    }
+    handleJoin(joinInput.value.trim());
   });
 
   joinInput.addEventListener('keydown', e => {
