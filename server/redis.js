@@ -1,5 +1,6 @@
 const crypto = require('crypto')
 const { createClient } = require('redis')
+const { SPACE_SLUG_RE } = require('./shared/space')
 
 const client = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' })
 
@@ -21,7 +22,7 @@ const PAINT_LOG_TTL = 86400
 const FLAGGED_KEY = 'flagged_sessions'
 const PROTECTED_TILES_KEY_GLOBAL = 'protected_tiles'
 const PROTECTED_REGIONS_KEY_GLOBAL = 'protected_regions'
-const SPACE_SLUG_RE = /^[a-zA-Z0-9]{12}$/
+
 
 function paintLogKey (sessionId) { return `paintlog:${sessionId}` }
 

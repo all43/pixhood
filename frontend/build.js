@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const SHARED_WS_TYPES = require('../shared/ws-types');
+const SHARED_SPACE = require('../shared/space');
 
 function validateWsTypesSync() {
   const configSrc = fs.readFileSync(path.join(__dirname, 'config.js'), 'utf8');
@@ -24,6 +25,31 @@ function validateWsTypesSync() {
 }
 
 validateWsTypesSync();
+
+function validateSpaceConstantsSync() {
+  const configSrc = fs.readFileSync(path.join(__dirname, 'config.js'), 'utf8');
+  const errors = [];
+  const slugCharsMatch = configSrc.match(/SLUG_CHARS\s*=\s*'([^']+)'/);
+  if (!slugCharsMatch) {
+    errors.push('  SLUG_CHARS: missing from frontend config.js');
+  } else if (slugCharsMatch[1] !== SHARED_SPACE.SLUG_CHARS) {
+    errors.push(`  SLUG_CHARS: frontend='${slugCharsMatch[1]}' shared='${SHARED_SPACE.SLUG_CHARS}'`);
+  }
+  const slugLengthMatch = configSrc.match(/SLUG_LENGTH\s*=\s*(\d+)/);
+  if (!slugLengthMatch) {
+    errors.push('  SLUG_LENGTH: missing from frontend config.js');
+  } else if (Number(slugLengthMatch[1]) !== SHARED_SPACE.SLUG_LENGTH) {
+    errors.push(`  SLUG_LENGTH: frontend='${slugLengthMatch[1]}' shared='${SHARED_SPACE.SLUG_LENGTH}'`);
+  }
+  if (errors.length > 0) {
+    console.error('Space constant mismatch between shared/space.js and frontend config.js:');
+    errors.forEach(e => console.error(e));
+    console.error('Update frontend/config.js to match shared/space.js');
+    process.exit(1);
+  }
+}
+
+validateSpaceConstantsSync();
 
 const SRC_DIR = path.join(__dirname);
 const DIST_DIR = path.join(__dirname, 'dist');

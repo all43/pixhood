@@ -5,7 +5,17 @@ const { WebSocketServer } = require('ws')
 const redis = require('./redis')
 const safeParse = redis.safeParse
 const WS_TYPES = require('./shared/ws-types')
+const { SLUG_CHARS, SLUG_LENGTH } = require('./shared/space')
 const S = require('./suspicion')
+
+function generateSlug () {
+  const bytes = crypto.randomBytes(SLUG_LENGTH)
+  let slug = ''
+  for (let i = 0; i < SLUG_LENGTH; i++) {
+    slug += SLUG_CHARS[bytes[i] % SLUG_CHARS.length]
+  }
+  return slug
+}
 
 const CONSTANTS = {
   WS_OPEN: 1,
@@ -641,7 +651,7 @@ async function handleRequest (req, res) {
           sendRateLimited(res, createLimit.retryAfter)
           return
         }
-        const slug = crypto.randomBytes(9).toString('base64url').slice(0, 12)
+        const slug = generateSlug()
         const key = SPACE_KEY_SECRET ? deriveSpaceKey(slug) : null
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ slug, key }))

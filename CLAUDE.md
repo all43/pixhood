@@ -67,7 +67,8 @@ pixhood/
 │   │   └── generate-icons.js
 │   └── dist/          # Build output (gitignored)
 ├── shared/             # Shared constants between frontend and server
-│   └── ws-types.js     # Single source of truth for WS message type strings
+│   ├── ws-types.js     # Single source of truth for WS message type strings
+│   └── space.js        # SLUG_CHARS, SLUG_LENGTH, SPACE_SLUG_RE for space slugs
 ├── server/            # Backend API (Fly.io)
 │   ├── index.js       # HTTP + WebSocket server, viewport API, child pixel API
 │   ├── redis.js       # Redis client, geo-indexed queries, TTL management
@@ -144,7 +145,7 @@ No user accounts — sessions are server-generated (`sess_<32hex>` via `crypto.r
 Isolated painting environments with separate pixel data. Used for kids' safety, friend groups, school classes — anyone with the link can paint, no one else can see or affect the pixels.
 
 - **URL**: `pixhood.art/s/<slug>` (path-based, Cloudflare Pages `_redirects` routes to SPA)
-- **Slug**: 12-char base62 string (`crypto.randomBytes(9).toString('base64url').slice(0, 12)`), ~3.2 × 10²¹ combinations
+- **Slug**: 12-char string using non-confusable alphabet (`abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789`, excludes 0/O/1/I/l). Generated via `generateSlug()` using `crypto.randomBytes(12)` with modulo indexing into `SLUG_CHARS` (defined in `shared/space.js`). ~2^70 combinations.
 - **Creation**: `POST /spaces` → `{ slug, key }`. Rate-limited: 10/min per IP. No Redis state until first paint (lazy). Key is an HMAC-derived admin key for the space.
 - **Privacy**: Invalid/unknown slug returns `[]` (identical to empty space). No enumeration endpoints. Global read rate limit (300/min per IP) makes brute-force impractical.
 - **Isolation**: Redis keys prefixed with `space:<slug>:`. Each space has its own geo index, pixel keys, and subpixel hashes. Broadcasts are scoped to connections in the same space.

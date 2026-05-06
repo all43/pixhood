@@ -1,6 +1,8 @@
 const _local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 const _backendHost = _local ? 'http://localhost:3000' : 'https://api.pixhood.art';
-const _spaceMatch = location.pathname.match(/^\/s\/([a-zA-Z0-9]{12})$/);
+const SLUG_CHARS = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const SLUG_LENGTH = 12;
+const _spaceMatch = location.pathname.match(new RegExp('^/s/([' + SLUG_CHARS + ']{' + SLUG_LENGTH + '})$'));
 
 const CONFIG = {
   API_URL: _backendHost,
