@@ -113,6 +113,8 @@ let _heartbeatTimer = null;
 let _paintSeq = 0;
 const _pendingPaints = new Map();
 let _reconnectTimer = null;
+let _lastPongTime = 0;
+let _connectionProbeTimer = null;
 
 function nextPaintId() { return ++_paintSeq; }
 
@@ -144,6 +146,7 @@ function _flushPending() {
 
 function disconnectWebSocket() {
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  if (_connectionProbeTimer) { clearTimeout(_connectionProbeTimer); _connectionProbeTimer = null; }
   _stopHeartbeat();
   _flushPending();
   if (_ws) {
@@ -191,6 +194,7 @@ function _openWS() {
 
   _ws.addEventListener('open', () => {
     console.log('WS connected');
+    _lastPongTime = Date.now();
     _retryDelay = CONFIG.WS_RETRY_INITIAL_MS;
     if (_onStatusChange) _onStatusChange('connected');
     _startHeartbeat();
@@ -214,7 +218,15 @@ function _openWS() {
       if (msg.type === CONFIG.WS_TYPE_CHILD && _onChild) _onChild(msg.data, msg.type);
       if (msg.type === CONFIG.WS_TYPE_CLEAR_CHILDREN && _onChild) _onChild(msg.data, msg.type);
       if (msg.type === CONFIG.WS_TYPE_DELETE_PIXEL && _onDelete) _onDelete(msg.data);
-      if (msg.type === CONFIG.WS_TYPE_PONG) return;
+      if (msg.type === CONFIG.WS_TYPE_PONG) {
+        _lastPongTime = Date.now();
+        if (_connectionProbeTimer) {
+          clearTimeout(_connectionProbeTimer);
+          _connectionProbeTimer = null;
+          _startHeartbeat();
+        }
+        return;
+      }
       if (msg.type === CONFIG.WS_TYPE_SESSION) {
         _sessionId = msg.sessionId;
         lsSet('pixhood_session', msg.sessionId);
@@ -243,6 +255,7 @@ function _openWS() {
 
   _ws.addEventListener('close', () => {
     console.log(`WS closed — reconnecting in ${_retryDelay}ms`);
+    if (_connectionProbeTimer) { clearTimeout(_connectionProbeTimer); _connectionProbeTimer = null; }
     _stopHeartbeat();
     _flushPending();
     if (_onStatusChange) _onStatusChange('disconnected');
@@ -258,13 +271,24 @@ function _openWS() {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    if (_connectionProbeTimer) { clearTimeout(_connectionProbeTimer); _connectionProbeTimer = null; }
     _stopHeartbeat();
   } else {
     if (!_ws || _ws.readyState !== 1) {
       _openWS();
       if (typeof refreshViewport === 'function') refreshViewport();
-    } else {
+    } else if (Date.now() - _lastPongTime < CONFIG.PONG_STALE_MS) {
       _startHeartbeat();
+    } else {
+      _connectionProbeTimer = setTimeout(() => {
+        _connectionProbeTimer = null;
+        if (!_ws || _ws.readyState !== 1 || _reconnectTimer) return;
+        _stopHeartbeat();
+        disconnectWebSocket();
+        _openWS();
+        if (typeof refreshViewport === 'function') refreshViewport();
+      }, CONFIG.CONNECTION_PROBE_TIMEOUT);
+      _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_PING }));
     }
   }
 });

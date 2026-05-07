@@ -12,7 +12,7 @@ Live at [pixhood.art](https://pixhood.art). Backend at [api.pixhood.art](https:/
 
 **Storage**: Redis — pixels as individual String keys with 24h TTL, sub-pixels as Hashes per parent tile, geo sorted set for viewport queries. Sub-pixel queries use pipelined `getSubpixelsMulti` (single Redis round-trip per viewport). Rate limit checks use `checkWriteRateLimitsBatch` (pipelined INCR+PEXPIRE+ZREMRANGEBYSCORE+ZCOUNT×2).
 
-**Real-time**: Viewport-scoped WebSocket broadcasts. Clients subscribe with their current viewport bounds; server only forwards pixel updates to clients whose viewport contains the painted tile. Client sends heartbeat pings every 30s. WS connections validated by Origin header (allowlist: `pixhood.art`, `*.pixhood.art`, `localhost`, `127.0.0.1`). Max WS message payload 10KB. Connections without a valid Origin header are rejected with 403 at handshake.
+**Real-time**: Viewport-scoped WebSocket broadcasts. Clients subscribe with their current viewport bounds; server only forwards pixel updates to clients whose viewport contains the painted tile. Client sends heartbeat pings every 30s, tracks `_lastPongTime` to detect zombie connections. On visibility resume, if last pong is >65s stale, sends a probe ping with 3s timeout — no pong = zombie detected, forces reconnect. WS connections validated by Origin header (allowlist: `pixhood.art`, `*.pixhood.art`, `localhost`, `127.0.0.1`). Max WS message payload 10KB. Connections without a valid Origin header are rejected with 403 at handshake.
 
 **Sessions**: Server-generated via `crypto.randomBytes(16)` → `sess_<32hex>`. Sent to client on first WS connection (or when client has no valid session ID). Stored in `localStorage`. Reference-counted across WS connections — session state survives reconnects, only deleted when ref count reaches 0.
 
@@ -291,6 +291,7 @@ Permission flow:
 - **TTL as enforcement**: Both protection and TTL extension use Redis TTL as the enforcement mechanism. Protected pixels have TTL -1 (PERSIST). Extended pixels have TTL > 24h (30 days). `getSubpixelsMulti` checks parent TTL to determine correct subpixels EXPIRE duration.
 - **Merged region borders**: Protected regions render gold dashed polylines around merged outlines. `mergeRectangles()` iteratively merges overlapping/adjacent rectangles. Overlapping regions draw only their outer perimeter.
 - **Region mode reuse**: All three admin region operations (erase, protect, extend TTL) share a single generic `REGION_MODES` config and `activateRegionMode()`/`deactivateRegionMode()` functions, eliminating duplicated drawing/event code.
+- **Zombie WS detection on visibility resume**: Fly.io's `auto_stop_machines` can suspend the backend overnight, killing the WS connection silently — the browser's `readyState` stays 1 (OPEN). On `visibilitychange → visible`, if `_lastPongTime` is stale (>65s), the client sends a probe ping and waits 3s. Pong arrives → alive, continue. No pong → zombie, force reconnect. Quick tab switches (<65s between visible sessions) skip the probe entirely and just restart the heartbeat.
 
 ## Implementation notes
 

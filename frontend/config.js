@@ -99,6 +99,10 @@ const CONFIG = {
   // Paint ack timeout (ms)
   PAINT_ACK_TIMEOUT: 5000,
 
+  // Connection probe (ms) — ping sent on stale visibility resume, timeout for pong
+  CONNECTION_PROBE_TIMEOUT: 3000,
+  PONG_STALE_MS: 65000, // 2× heartbeat interval + buffer
+
   // Refetch trigger
   REFETCH_THRESHOLD: 0.5,
 
