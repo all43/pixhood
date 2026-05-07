@@ -355,9 +355,12 @@ function createLocateButton() {
 }
 
 let _lastLocateTap = 0;
+let _locating = false;
 const LOCATE_FORCE_FRESH_MS = 30000;
 
 async function handleLocate() {
+  if (_locating) return;
+  _locating = true;
   const btn = document.getElementById('locate-btn');
   btn.classList.add('locating');
 
@@ -368,6 +371,7 @@ async function handleLocate() {
   const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT, { forceFresh });
 
   btn.classList.remove('locating');
+  _locating = false;
 
   if (result.status === 'granted') {
     map.setView([result.lat, result.lng], CONFIG.DEFAULT_ZOOM, { animate: true });

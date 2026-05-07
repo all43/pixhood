@@ -271,8 +271,17 @@ html, body {
 }
 
 #locate-btn.locating {
-  pointer-events: none;
   opacity: 0.5;
+  cursor: progress;
+}
+
+@keyframes locate-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+#locate-btn.locating .locate-icon {
+  animation: locate-pulse 1.2s ease-in-out infinite;
 }
 
 .locate-icon {
