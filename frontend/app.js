@@ -520,7 +520,10 @@ async function getGeolocation(timeout, opts) {
   } catch {
   }
 
+  const enableHighAccuracy = true;
+
   const requestPosition = opts => {
+    // there is an ongoing Chromium bug that causes geolocation requests with enableHighAccuracy: false to never resolve
     const t0 = Date.now();
     return new Promise(resolve => {
       navigator.geolocation.getCurrentPosition(
@@ -541,7 +544,7 @@ async function getGeolocation(timeout, opts) {
   if (!forceFresh) {
     const fastCached = await requestPosition({
       timeout: CONFIG.GEO_FAST_TIMEOUT,
-      enableHighAccuracy: false,
+      enableHighAccuracy,
       maximumAge: GEO_MAX_AGE_MS
     });
     if (fastCached.status === 'granted') {
@@ -561,7 +564,7 @@ async function getGeolocation(timeout, opts) {
     : requestedTimeout;
   const fresh = await requestPosition({
     timeout: mainTimeout,
-    enableHighAccuracy: false,
+    enableHighAccuracy,
     maximumAge: 0
   });
   return fresh;
