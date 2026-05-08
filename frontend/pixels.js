@@ -189,10 +189,13 @@ function setViewportReadyCallback(cb) {
 }
 
 function _openWS() {
+  if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+  if (_ws) { _ws.onopen = null; _ws.onmessage = null; _ws.onclose = null; _ws.onerror = null; }
+
   const wsUrl = CONFIG.WS_URL + (CONFIG.SPACE ? `?space=${CONFIG.SPACE}` : '');
   _ws = new WebSocket(wsUrl);
 
-  _ws.addEventListener('open', () => {
+  _ws.onopen = () => {
     console.log('WS connected');
     _lastPongTime = Date.now();
     _retryDelay = CONFIG.WS_RETRY_INITIAL_MS;
@@ -209,9 +212,9 @@ function _openWS() {
         _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_VIEWPORT, bounds: fb, ...(sid ? { sessionId: sid } : {}), zoom }));
       }
     }
-  });
+  };
 
-  _ws.addEventListener('message', e => {
+  _ws.onmessage = e => {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === CONFIG.WS_TYPE_PIXEL && _onPixel) _onPixel(msg.data);
@@ -251,9 +254,9 @@ function _openWS() {
     } catch (err) {
       console.error('WS message parse error:', err);
     }
-  });
+  };
 
-  _ws.addEventListener('close', () => {
+  _ws.onclose = () => {
     console.log(`WS closed — reconnecting in ${_retryDelay}ms`);
     if (_connectionProbeTimer) { clearTimeout(_connectionProbeTimer); _connectionProbeTimer = null; }
     _stopHeartbeat();
@@ -261,11 +264,11 @@ function _openWS() {
     if (_onStatusChange) _onStatusChange('disconnected');
     _reconnectTimer = setTimeout(_openWS, _retryDelay);
     _retryDelay = Math.min(_retryDelay * 2, CONFIG.WS_RETRY_MAX_MS);
-  });
+  };
 
-  _ws.addEventListener('error', err => {
+  _ws.onerror = err => {
     console.error('WS error:', err);
-  });
+  };
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -283,10 +286,7 @@ document.addEventListener('visibilitychange', () => {
       _connectionProbeTimer = setTimeout(() => {
         _connectionProbeTimer = null;
         if (!_ws || _ws.readyState !== 1 || _reconnectTimer) return;
-        _stopHeartbeat();
-        disconnectWebSocket();
-        _openWS();
-        if (typeof refreshViewport === 'function') refreshViewport();
+        _ws.close();
       }, CONFIG.CONNECTION_PROBE_TIMEOUT);
       _ws.send(JSON.stringify({ type: CONFIG.WS_TYPE_PING }));
     }
