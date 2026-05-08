@@ -2,6 +2,7 @@ let selectedColor = CONFIG.DEFAULT_COLOR;
 let slowHintTimer = null;
 let _refreshTimer = null;
 let _hasConnectedOnce = false;
+let _mapReady = false;
 let _undoCount = 0;
 let _undoTimer = null;
 let _undoToastItem = null;
@@ -700,6 +701,12 @@ function scheduleViewportRefresh() {
 }
 
 async function proceedToMap(geoResult, pixelsPromise) {
+  if (_mapReady) {
+    handleLocationResult(geoResult);
+    hideOverlay();
+    return;
+  }
+  _mapReady = true;
   const lat = geoResult.lat || CONFIG.DEFAULT_LAT;
   const lng = geoResult.lng || CONFIG.DEFAULT_LNG;
   initMap(lat, lng);
@@ -956,6 +963,15 @@ async function init() {
     return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
   })();
 
+  document.getElementById('btn-enable-geo').addEventListener('click', async () => {
+    await requestGeoAndProceed(geoPromise, CONFIG.GEO_DEFAULT_TIMEOUT);
+  });
+
+  document.getElementById('btn-skip-geo').addEventListener('click', async () => {
+    lsSet(GEO_PREF_KEY, 'skipped');
+    await proceedToMap({ status: 'skipped' }, geoPromise);
+  });
+
   const pref = lsGet(GEO_PREF_KEY);
 
   if (pref === 'granted') {
@@ -986,14 +1002,6 @@ async function init() {
     return;
   }
 
-  document.getElementById('btn-enable-geo').addEventListener('click', async () => {
-    await requestGeoAndProceed(geoPromise, CONFIG.GEO_DEFAULT_TIMEOUT);
-  });
-
-  document.getElementById('btn-skip-geo').addEventListener('click', async () => {
-    lsSet(GEO_PREF_KEY, 'skipped');
-    await proceedToMap({ status: 'skipped' }, geoPromise);
-  });
 }
 
 async function initPWAInstallPrompt(map) {

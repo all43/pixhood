@@ -105,6 +105,10 @@ function renderTtlExtendedBorders() {
 }
 
 function initMap(lat, lng) {
+  if (map) {
+    map.setView([lat, lng], CONFIG.DEFAULT_ZOOM);
+    return map;
+  }
   map = L.map('map', {
     center: [lat, lng],
     zoom: CONFIG.DEFAULT_ZOOM,
