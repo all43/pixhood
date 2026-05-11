@@ -171,7 +171,7 @@ function getViewportBounds() {
 }
 
 function getCurrentZoom() {
-  return map.getZoom();
+  return map ? map.getZoom() : 0;
 }
 
 function createGridLayer() {

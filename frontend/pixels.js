@@ -115,6 +115,7 @@ const _pendingPaints = new Map();
 let _reconnectTimer = null;
 let _lastPongTime = 0;
 let _connectionProbeTimer = null;
+let _everConnected = false;
 
 function nextPaintId() { return ++_paintSeq; }
 
@@ -164,6 +165,7 @@ function disconnectWebSocket() {
 window.addEventListener('pagehide', disconnectWebSocket);
 
 function connectWebSocket(onPixel, onChild, onDelete, onPaintError, onBlocked, onStatusChange, onRegionsChanged) {
+  _everConnected = true;
   _onPixel = onPixel;
   _onChild = onChild || null;
   _onDelete = onDelete || null;
@@ -276,7 +278,7 @@ document.addEventListener('visibilitychange', () => {
     if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     if (_connectionProbeTimer) { clearTimeout(_connectionProbeTimer); _connectionProbeTimer = null; }
     _stopHeartbeat();
-  } else {
+  } else if (_everConnected) {
     if (!_ws || _ws.readyState !== 1) {
       _openWS();
       if (typeof refreshViewport === 'function') refreshViewport();
