@@ -127,6 +127,7 @@ function initMap(lat, lng) {
   updateGridVisibility();
 
   createLocateButton();
+  createHomeButton();
 
   map.on('zoomend', onZoomChange);
   map.on('click', handleMapClick);
@@ -164,6 +165,7 @@ function onZoomChange() {
 }
 
 function getViewportBounds() {
+  if (!map) return null;
   const b = map.getBounds();
   return { n: b.getNorth(), s: b.getSouth(), e: b.getEast(), w: b.getWest() };
 }
@@ -358,6 +360,52 @@ function createLocateButton() {
   document.getElementById('app').appendChild(btn);
 }
 
+function createHomeButton() {
+  const btn = document.createElement('button');
+  btn.id = 'home-btn';
+  btn.title = 'Go home';
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12L12 3l9 9"/><path d="M5 10v9a1 1 0 0 0 1 1h4v-5h4v5h4a1 1 0 0 0 1-1v-9"/></svg>';
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (_homeLongPressFired) { _homeLongPressFired = false; return; }
+    flyToHome();
+  });
+
+  let _homeLongPressTimer = null;
+  let _homeLongPressFired = false;
+
+  function startLongPress(e) {
+    _homeLongPressFired = false;
+    _homeLongPressTimer = setTimeout(() => {
+      _homeLongPressFired = true;
+      const home = getHomeLocation();
+      enterSetHomeMode({
+        preselectedLat: home ? home.lat : undefined,
+        preselectedLng: home ? home.lng : undefined
+      });
+    }, 500);
+  }
+  function cancelLongPress() {
+    if (_homeLongPressTimer) { clearTimeout(_homeLongPressTimer); _homeLongPressTimer = null; }
+  }
+
+  btn.addEventListener('mousedown', startLongPress);
+  btn.addEventListener('mouseup', cancelLongPress);
+  btn.addEventListener('mouseleave', cancelLongPress);
+  btn.addEventListener('touchstart', startLongPress, { passive: true });
+  btn.addEventListener('touchend', cancelLongPress);
+  btn.addEventListener('touchcancel', cancelLongPress);
+
+  document.getElementById('app').appendChild(btn);
+}
+
+function flyToHome() {
+  const home = resolveHomeLocation();
+  if (typeof map !== 'undefined') {
+    map.setView([home.lat, home.lng], CONFIG.DEFAULT_ZOOM, { animate: true });
+  }
+}
+
 let _lastLocateTap = 0;
 let _locating = false;
 const LOCATE_FORCE_FRESH_MS = 30000;
@@ -471,6 +519,7 @@ function handleMapClick(e) {
   if (map.getZoom() < CONFIG.GRID_ZOOM_THRESHOLD) return;
   const mapEl = document.getElementById('map');
   if (mapEl.classList.contains('region-select-mode') || mapEl.classList.contains('inspect-mode')) return;
+  if (_setHomeMode) return;
   if (!isWebSocketConnected()) {
     showToast('Not connected \u2014 try again');
     return;
@@ -732,6 +781,7 @@ function updateBoundaryVisualization() {
   if (!lb) return;
 
   const vb = getViewportBounds();
+  if (!vb) return;
 
   if (boundaryRect) {
     map.removeLayer(boundaryRect);

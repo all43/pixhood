@@ -29,6 +29,274 @@ function storeSpaceKey(slug, key) {
   lsSet(CONFIG.SPACE_KEY_PREFIX + slug, key);
 }
 
+function getHomeKey() {
+  return CONFIG.SPACE ? CONFIG.HOME_KEY + ':' + CONFIG.SPACE : CONFIG.HOME_KEY;
+}
+
+function getHomeLocation() {
+  try {
+    const raw = lsGet(getHomeKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.lat !== 'number' || typeof parsed.lng !== 'number') return null;
+    return { lat: parsed.lat, lng: parsed.lng };
+  } catch {
+    return null;
+  }
+}
+
+function setHomeLocation(lat, lng) {
+  lsSet(getHomeKey(), JSON.stringify({ lat, lng }));
+}
+
+function resolveHomeLocation() {
+  if (CONFIG.SPACE) {
+    const spaceHome = getHomeLocation();
+    if (spaceHome) return spaceHome;
+  }
+  const globalRaw = lsGet(CONFIG.HOME_KEY);
+  if (globalRaw) {
+    try {
+      const parsed = JSON.parse(globalRaw);
+      if (typeof parsed.lat === 'number' && typeof parsed.lng === 'number') return { lat: parsed.lat, lng: parsed.lng };
+    } catch {}
+  }
+  return { lat: CONFIG.DEFAULT_LAT, lng: CONFIG.DEFAULT_LNG };
+}
+
+function getHomeShareLink(slug) {
+  const key = CONFIG.HOME_KEY + ':' + slug;
+  let home = null;
+  try {
+    const raw = lsGet(key);
+    if (raw) { const p = JSON.parse(raw); if (typeof p.lat === 'number' && typeof p.lng === 'number') home = p; }
+  } catch {}
+  if (!home) {
+    try {
+      const raw = lsGet(CONFIG.HOME_KEY);
+      if (raw) { const p = JSON.parse(raw); if (typeof p.lat === 'number' && typeof p.lng === 'number') home = p; }
+    } catch {}
+  }
+  if (home) {
+    return `${location.origin}/s/${slug}?lat=${home.lat.toFixed(CONFIG.HOME_LINK_PRECISION)}&lng=${home.lng.toFixed(CONFIG.HOME_LINK_PRECISION)}`;
+  }
+  return `${location.origin}/s/${slug}`;
+}
+
+let _setHomeMode = false;
+let _setHomeHiddenEls = [];
+let _setHomeCallback = null;
+let _setHomeMarker = null;
+let _setHomeCircle = null;
+let _setHomeUI = null;
+let _setHomeMapClickRef = null;
+let _setHomeSearchRef = null;
+
+function createLocationSearch({ container, onSelect, placeholder }) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'location-search';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'location-search-input';
+  input.placeholder = placeholder || 'Search place\u2026';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  const dropdown = document.createElement('div');
+  dropdown.className = 'location-search-dropdown';
+  wrapper.appendChild(input);
+  wrapper.appendChild(dropdown);
+  container.appendChild(wrapper);
+
+  let debounce = null;
+  let abortCtrl = null;
+
+  input.addEventListener('input', () => {
+    if (debounce) clearTimeout(debounce);
+    if (abortCtrl) abortCtrl.abort();
+    const q = input.value.trim();
+    if (q.length < 2) { dropdown.textContent = ''; dropdown.classList.remove('visible'); return; }
+    debounce = setTimeout(async () => {
+      abortCtrl = new AbortController();
+      try {
+        const res = await fetch(`${CONFIG.NOMINATIM_URL}?format=json&q=${encodeURIComponent(q)}&limit=5`, { signal: abortCtrl.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        dropdown.textContent = '';
+        if (!data.length) { dropdown.classList.remove('visible'); return; }
+        data.forEach(r => {
+          const item = document.createElement('div');
+          item.className = 'location-search-item';
+          item.textContent = r.display_name;
+          item.addEventListener('mousedown', e => {
+            e.preventDefault();
+            const lat = parseFloat(r.lat);
+            const lng = parseFloat(r.lon);
+            input.value = r.display_name.split(',')[0];
+            dropdown.classList.remove('visible');
+            onSelect({ lat, lng, name: r.display_name });
+          });
+          dropdown.appendChild(item);
+        });
+        dropdown.classList.add('visible');
+      } catch (err) {
+        if (err.name !== 'AbortError') console.warn('[nominatim]', err);
+      }
+    }, 400);
+  });
+
+  input.addEventListener('blur', () => { setTimeout(() => dropdown.classList.remove('visible'), 200); });
+  input.addEventListener('focus', () => { if (dropdown.children.length) dropdown.classList.add('visible'); });
+
+  return { wrapper, input, cleanup() { if (debounce) clearTimeout(debounce); if (abortCtrl) abortCtrl.abort(); } };
+}
+
+function enterSetHomeMode(options) {
+  options = options || {};
+  if (_setHomeMode) return;
+  _setHomeMode = true;
+  _setHomeCallback = options.callback || null;
+  _setHomeHiddenEls = [];
+
+  const loading = document.getElementById('loading');
+  const welcome = document.getElementById('welcome');
+  const spinner = document.getElementById('loading-spinner-screen');
+
+  if (welcome && !welcome.classList.contains('hidden')) {
+    _setHomeHiddenEls.push(welcome);
+    _setHomeHiddenEls.push(loading);
+    welcome.classList.add('hidden');
+    loading.classList.add('hidden');
+    if (spinner) spinner.classList.add('hidden');
+  }
+  if (document.body.classList.contains('menu-open')) {
+    document.body.classList.remove('menu-open');
+  }
+  document.body.classList.add('set-home-mode');
+
+  const app = document.getElementById('app');
+  const ui = document.createElement('div');
+  ui.className = 'set-home-ui';
+  ui.innerHTML = '<div class="set-home-search-bar"></div><div class="set-home-actions"><button class="set-home-cancel" type="button">Cancel</button><button class="set-home-confirm" type="button" disabled>Set Home</button></div>';
+  app.appendChild(ui);
+  _setHomeUI = ui;
+
+  const searchBar = ui.querySelector('.set-home-search-bar');
+  const confirmBtn = ui.querySelector('.set-home-confirm');
+  const cancelBtn = ui.querySelector('.set-home-cancel');
+
+  let selectedLat = options.preselectedLat || null;
+  let selectedLng = options.preselectedLng || null;
+
+  _setHomeSearchRef = createLocationSearch({
+    container: searchBar,
+    placeholder: 'Search place\u2026',
+    onSelect({ lat, lng }) {
+      selectedLat = lat;
+      selectedLng = lng;
+      confirmBtn.disabled = false;
+      _updateSetHomeMarker(lat, lng);
+      if (typeof map !== 'undefined') map.setView([lat, lng], CONFIG.DEFAULT_ZOOM, { animate: true });
+    }
+  });
+
+  function _updateSetHomeMarker(lat, lng) {
+    if (typeof map === 'undefined') return;
+    if (!_setHomeMarker) {
+      const icon = L.divIcon({
+        className: 'home-pin-wrapper',
+        html: '<div class="home-pin"></div>',
+        iconSize: [24, 24],
+        iconAnchor: [12, 12]
+      });
+      _setHomeMarker = L.marker([lat, lng], { icon, draggable: true, zIndexOffset: 2000 }).addTo(map);
+      _setHomeMarker.on('dragend', () => {
+        const pos = _setHomeMarker.getLatLng();
+        selectedLat = pos.lat;
+        selectedLng = pos.lng;
+        _updateSetHomeCircle(pos.lat, pos.lng);
+      });
+    } else {
+      _setHomeMarker.setLatLng([lat, lng]);
+    }
+    _updateSetHomeCircle(lat, lng);
+  }
+
+  function _updateSetHomeCircle(lat, lng) {
+    if (typeof map === 'undefined') return;
+    if (!_setHomeCircle) {
+      _setHomeCircle = L.circle([lat, lng], {
+        radius: CONFIG.HOME_RADIUS_M,
+        color: '#888',
+        weight: 1,
+        dashArray: '4 4',
+        fillColor: '#888',
+        fillOpacity: 0.08,
+        interactive: false
+      }).addTo(map);
+    } else {
+      _setHomeCircle.setLatLng([lat, lng]);
+    }
+  }
+
+  if (selectedLat !== null && selectedLng !== null) {
+    _updateSetHomeMarker(selectedLat, selectedLng);
+    confirmBtn.disabled = false;
+    if (typeof map !== 'undefined') map.setView([selectedLat, selectedLng], CONFIG.DEFAULT_ZOOM, { animate: true });
+  }
+
+  _setHomeMapClickRef = function (e) {
+    selectedLat = e.latlng.lat;
+    selectedLng = e.latlng.lng;
+    confirmBtn.disabled = false;
+    _updateSetHomeMarker(selectedLat, selectedLng);
+  };
+  if (typeof map !== 'undefined') map.on('click', _setHomeMapClickRef);
+
+  confirmBtn.addEventListener('click', () => {
+    if (selectedLat === null || selectedLng === null) return;
+    exitSetHomeMode(selectedLat, selectedLng);
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    exitSetHomeMode(null, null);
+  });
+
+  document.addEventListener('keydown', _onSetHomeEsc);
+}
+
+function _onSetHomeEsc(e) {
+  if (e.key === 'Escape' && _setHomeMode) exitSetHomeMode(null, null);
+}
+
+function exitSetHomeMode(lat, lng) {
+  _setHomeMode = false;
+  document.removeEventListener('keydown', _onSetHomeEsc);
+
+  if (_setHomeMarker) { if (typeof map !== 'undefined' && map.hasLayer(_setHomeMarker)) map.removeLayer(_setHomeMarker); _setHomeMarker = null; }
+  if (_setHomeCircle) { if (typeof map !== 'undefined' && map.hasLayer(_setHomeCircle)) map.removeLayer(_setHomeCircle); _setHomeCircle = null; }
+  if (_setHomeMapClickRef) { if (typeof map !== 'undefined') map.off('click', _setHomeMapClickRef); _setHomeMapClickRef = null; }
+  if (_setHomeSearchRef) { _setHomeSearchRef.cleanup(); _setHomeSearchRef = null; }
+  if (_setHomeUI) { _setHomeUI.remove(); _setHomeUI = null; }
+
+  document.body.classList.remove('set-home-mode');
+
+  for (const el of _setHomeHiddenEls) {
+    el.classList.remove('hidden');
+  }
+  _setHomeHiddenEls = [];
+
+  if (lat !== null && lng !== null) {
+    setHomeLocation(lat, lng);
+    showToast('Home set');
+  }
+
+  if (_setHomeCallback) {
+    const cb = _setHomeCallback;
+    _setHomeCallback = null;
+    cb(lat, lng);
+  }
+}
+
 function navigateTo(url) {
   if (typeof disconnectWebSocket === 'function') disconnectWebSocket();
   location.href = url;
@@ -65,7 +333,9 @@ function showCreateSpaceConfirmModal() {
   const existing = document.getElementById('create-space-modal');
   if (existing) existing.remove();
 
-  const needsGeoPref = !lsGet(GEO_PREF_KEY);
+  const geoPref = lsGet(GEO_PREF_KEY);
+  const needsGeoPref = !geoPref;
+  const locationGranted = geoPref === 'granted';
 
   const overlay = document.createElement('div');
   overlay.id = 'create-space-modal';
@@ -80,9 +350,25 @@ function showCreateSpaceConfirmModal() {
       ${needsGeoPref ? `
       <label class="create-space-geo-label">
         <input type="checkbox" id="create-space-geo" checked />
-        Share my location
+        <span>Enable location<span class="create-space-geo-hint">Center the map on you</span></span>
       </label>
       ` : ''}
+      <div id="create-space-home" class="create-space-home">
+        ${locationGranted || needsGeoPref ? `
+        <label class="create-space-home-check-label">
+          <input type="checkbox" id="create-space-home-check" />
+          <span>Use my location as home area<span class="create-space-geo-hint">Others see ~1km area, not your exact position</span></span>
+        </label>
+        ` : ''}
+        <div id="create-space-home-manual" class="create-space-home-manual">
+          <div id="create-space-home-search"></div>
+          <div class="create-space-home-btns">
+            <button type="button" id="create-space-home-pick" class="create-space-home-btn">Pick on map</button>
+          </div>
+          <div id="create-space-home-name" class="create-space-home-name"></div>
+        </div>
+        <div id="create-space-home-geo-status" class="create-space-home-geo-status hidden"></div>
+      </div>
       <div id="create-space-error" class="hidden"></div>
       <div class="create-space-buttons">
         <button class="create-space-cancel" id="create-space-cancel">Cancel</button>
@@ -92,7 +378,97 @@ function showCreateSpaceConfirmModal() {
   `;
   document.body.appendChild(overlay);
 
+  let homeLat = null;
+  let homeLng = null;
+  let homeName = '';
+
+  const searchContainer = document.getElementById('create-space-home-search');
+  const nameEl = document.getElementById('create-space-home-name');
+  const homeCheck = document.getElementById('create-space-home-check');
+  const manualEl = document.getElementById('create-space-home-manual');
+  const geoStatusEl = document.getElementById('create-space-home-geo-status');
+  const geoCheckbox = document.getElementById('create-space-geo');
+
+  const searchRef = createLocationSearch({
+    container: searchContainer,
+    placeholder: 'Search place\u2026',
+    onSelect({ lat, lng, name }) {
+      homeLat = lat;
+      homeLng = lng;
+      homeName = name;
+      nameEl.textContent = name.split(',').slice(0, 2).join(',');
+      nameEl.classList.add('visible');
+    }
+  });
+
+  function updateHomeCheckVisibility() {
+    if (!homeCheck) return;
+    const show = geoCheckbox ? geoCheckbox.checked : locationGranted;
+    homeCheck.closest('label').classList.toggle('hidden', !show);
+    if (!show && homeCheck.checked) {
+      homeCheck.checked = false;
+      handleHomeUncheck();
+    }
+  }
+
+  function handleHomeCheck() {
+    manualEl.classList.add('hidden');
+    geoStatusEl.classList.remove('hidden');
+    geoStatusEl.textContent = 'Locating\u2026';
+
+    getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT).then(result => {
+      if (!document.getElementById('create-space-modal')) return;
+      if (result.status === 'granted') {
+        homeLat = result.lat;
+        homeLng = result.lng;
+        homeName = '';
+        geoStatusEl.textContent = `\u2713 ${result.lat.toFixed(1)}, ${result.lng.toFixed(1)}`;
+      } else {
+        homeCheck.checked = false;
+        handleHomeUncheck();
+        showToast('Couldn\u2019t get location');
+      }
+    });
+  }
+
+  function handleHomeUncheck() {
+    manualEl.classList.remove('hidden');
+    geoStatusEl.classList.add('hidden');
+    homeLat = null;
+    homeLng = null;
+  }
+
+  if (homeCheck) {
+    homeCheck.addEventListener('change', () => {
+      if (homeCheck.checked) {
+        handleHomeCheck();
+      } else {
+        handleHomeUncheck();
+      }
+    });
+  }
+
+  if (geoCheckbox) {
+    geoCheckbox.addEventListener('change', updateHomeCheckVisibility);
+  }
+
+  updateHomeCheckVisibility();
+
+  document.getElementById('create-space-home-pick').addEventListener('click', () => {
+    enterSetHomeMode({
+      preselectedLat: homeLat,
+      preselectedLng: homeLng,
+      callback(lat, lng) {
+        homeLat = lat;
+        homeLng = lng;
+        nameEl.textContent = `${lat.toFixed(1)}, ${lng.toFixed(1)}`;
+        nameEl.classList.add('visible');
+      }
+    });
+  });
+
   document.getElementById('create-space-cancel').addEventListener('click', () => {
+    searchRef.cleanup();
     overlay.remove();
   });
 
@@ -108,10 +484,13 @@ function showCreateSpaceConfirmModal() {
       const res = await fetch(`${CONFIG.API_URL}/spaces`, { method: 'POST' });
       if (!res.ok) throw new Error(res.status);
       const { slug, key } = await res.json();
-      const geoCheckbox = document.getElementById('create-space-geo');
       if (geoCheckbox) {
         lsSet(GEO_PREF_KEY, geoCheckbox.checked ? 'granted' : 'skipped');
       }
+      if (homeLat !== null && homeLng !== null) {
+        setHomeLocation(homeLat, homeLng);
+      }
+      searchRef.cleanup();
       overlay.remove();
       if (key) {
         showSpaceKeyModal(slug, key);
@@ -134,8 +513,7 @@ function showSpaceKeyModal(slug, key) {
 
   const overlay = document.createElement('div');
   overlay.id = 'space-key-modal';
-  const spaceLink = `${location.origin}/s/${slug}`;
-  overlay.innerHTML = `
+  const spaceLink = getHomeShareLink(slug);  overlay.innerHTML = `
     <div class="space-key-box">
       <h2>Space Created!</h2>
       <div class="space-key-field">
@@ -580,6 +958,9 @@ function handleLocationResult(result) {
       showUserPosition(lat, lng);
       lsSet(LAST_GEO_KEY, JSON.stringify({ lat, lng, savedAt: Date.now() }));
       lsSet(GEO_PREF_KEY, 'granted');
+      if (!lsGet(CONFIG.HOME_KEY)) {
+        lsSet(CONFIG.HOME_KEY, JSON.stringify({ lat, lng }));
+      }
       break;
     case 'skipped':
       showLocationBanner('Painting in Berlin. Tap the locate button in the bottom-right corner to use your location.');
@@ -680,6 +1061,7 @@ function onWSBlocked() {
 
 async function refreshViewport(force) {
   const vb = getViewportBounds();
+  if (!vb) return;
   const zoom = getCurrentZoom();
 
   if (!force && !needsRefetch(vb)) {
@@ -710,9 +1092,18 @@ async function proceedToMap(geoResult, pixelsPromise) {
     return;
   }
   _mapReady = true;
-  const lat = geoResult.lat || CONFIG.DEFAULT_LAT;
-  const lng = geoResult.lng || CONFIG.DEFAULT_LNG;
+  let lat = geoResult.lat || CONFIG.DEFAULT_LAT;
+  let lng = geoResult.lng || CONFIG.DEFAULT_LNG;
+  if (CONFIG.SPACE) {
+    const spaceHome = getHomeLocation();
+    if (spaceHome && !geoResult.lat) {
+      lat = spaceHome.lat;
+      lng = spaceHome.lng;
+    }
+  }
   initMap(lat, lng);
+  const topbar = document.getElementById('topbar');
+  if (topbar) document.documentElement.style.setProperty('--topbar-h', topbar.offsetHeight + 'px');
   handleLocationResult(geoResult);
 
   showSpinnerScreen('Loading pixels\u2026');
@@ -802,7 +1193,7 @@ function initSpaceIndicator() {
   slug.textContent = CONFIG.SPACE;
   section.classList.remove('hidden');
   btn.addEventListener('click', () => {
-    const url = `${location.origin}/s/${CONFIG.SPACE}`;
+    const url = getHomeShareLink(CONFIG.SPACE);
     navigator.clipboard.writeText(url).then(() => showToast('Link copied')).catch(() => {
       showToast(url);
     });
@@ -837,6 +1228,7 @@ function initMenu() {
   const joinBack = document.getElementById('menu-join-back');
   const installBtn = document.getElementById('menu-btn-install');
   const welcomeBtn = document.getElementById('menu-btn-welcome');
+  const setHomeBtn = document.getElementById('menu-btn-set-home');
 
   welcomeBtn.addEventListener('click', () => {
     closeMenu();
@@ -849,6 +1241,15 @@ function initMenu() {
     hideWelcomeError();
     document.getElementById('welcome-space-buttons').classList.remove('hidden');
     document.getElementById('join-space-form').classList.add('hidden');
+  });
+
+  setHomeBtn.addEventListener('click', () => {
+    closeMenu();
+    const home = getHomeLocation();
+    enterSetHomeMode({
+      preselectedLat: home ? home.lat : undefined,
+      preselectedLng: home ? home.lng : undefined
+    });
   });
 
   function openMenu() {
@@ -959,6 +1360,14 @@ async function init() {
       "You've been invited to paint on a map in a private Space \u2014 only people with the link can see and paint here.";
     document.getElementById('welcome-divider').classList.add('hidden');
     document.getElementById('welcome-space-buttons').classList.add('hidden');
+
+    const params = new URLSearchParams(location.search);
+    const linkLat = parseFloat(params.get('lat'));
+    const linkLng = parseFloat(params.get('lng'));
+    if (isFinite(linkLat) && isFinite(linkLng)) {
+      setHomeLocation(linkLat, linkLng);
+      history.replaceState(null, '', location.pathname);
+    }
   }
 
   const geoPromise = (async () => {

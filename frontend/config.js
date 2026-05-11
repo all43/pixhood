@@ -84,6 +84,10 @@ const CONFIG = {
 
   ERASE_COLOR: '__erase__',
   SPACE_KEY_PREFIX: 'space_key:',
+  HOME_KEY: 'home',
+  HOME_LINK_PRECISION: 1,
+  HOME_RADIUS_M: 1100,
+  NOMINATIM_URL: 'https://nominatim.openstreetmap.org/search',
 
   PROTECTED_BORDER_COLOR: 'rgba(160,140,100,0.35)',
   PROTECTED_BORDER_WEIGHT: 1,

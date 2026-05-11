@@ -1234,6 +1234,286 @@ body.menu-open #menu-panel {
   cursor: not-allowed;
 }
 
+/* ── Home button ── */
+#home-btn {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: 164px;
+  z-index: 1001;
+  width: 36px;
+  height: 36px;
+  background: #1a1a2e;
+  border: 2px solid rgba(255,255,255,0.2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.2s ease, background 0.2s ease;
+  padding: 0;
+}
+
+#home-btn:hover {
+  border-color: #e94560;
+  background: #22223a;
+}
+
+#home-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Home pin marker ── */
+.home-pin-wrapper {
+  background: none !important;
+  border: none !important;
+}
+
+.home-pin {
+  width: 24px;
+  height: 24px;
+  background: #4fc3f7;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(79, 195, 247, 0.6);
+}
+
+/* ── Location search (reusable) ── */
+.location-search {
+  position: relative;
+  width: 100%;
+}
+
+.location-search-input {
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #fff;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.location-search-input:focus {
+  border-color: rgba(255,255,255,0.3);
+}
+
+.location-search-dropdown {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-top: none;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.location-search-dropdown.visible {
+  display: block;
+}
+
+.location-search-item {
+  padding: 8px 10px;
+  font-size: 0.75rem;
+  color: rgba(255,255,255,0.7);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.2px;
+}
+
+.location-search-item:hover {
+  background: rgba(255,255,255,0.06);
+  color: #fff;
+}
+
+/* ── Set home floating UI ── */
+body.set-home-mode #home-btn,
+body.set-home-mode #locate-btn {
+  display: none;
+}
+
+body.set-home-mode #create-space-modal {
+  display: none;
+}
+
+body.set-home-mode #topbar {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.set-home-ui {
+  position: absolute;
+  inset: 0;
+  z-index: 1200;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.set-home-search-bar {
+  padding-top: calc(var(--topbar-h, 50px) + 8px);
+  padding-bottom: 8px;
+  padding-left: max(56px, calc(40px + env(safe-area-inset-left)));
+  padding-right: 12px;
+  pointer-events: auto;
+}
+
+.location-search-input {
+  width: 100%;
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.set-home-actions {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  pointer-events: auto;
+  justify-content: center;
+}
+
+.set-home-cancel,
+.set-home-confirm {
+  padding: 10px 20px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+  border: none;
+}
+
+.set-home-cancel {
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.7);
+  border: 1px solid rgba(255,255,255,0.15);
+}
+
+.set-home-cancel:hover {
+  background: rgba(255,255,255,0.15);
+}
+
+.set-home-confirm {
+  background: #e94560;
+  color: #fff;
+}
+
+.set-home-confirm:hover {
+  background: #d63851;
+}
+
+.set-home-confirm:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Space creation home area section ── */
+.create-space-home {
+  margin: 16px 0;
+  text-align: left;
+}
+
+.create-space-geo-hint {
+  display: block;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.4);
+  margin-top: 2px;
+}
+
+.create-space-home-check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.875rem;
+  color: rgba(255,255,255,0.65);
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.create-space-home-check-label.hidden {
+  display: none;
+}
+
+.create-space-home-check-label input[type="checkbox"] {
+  accent-color: #e94560;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.create-space-home-manual {
+  margin-top: 4px;
+}
+
+.create-space-home-manual.hidden {
+  display: none;
+}
+
+.create-space-home-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.create-space-home-btn {
+  flex: 1;
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.75rem;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.create-space-home-btn:hover {
+  border-color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.75);
+}
+
+.create-space-home-geo-status {
+  font-size: 0.75rem;
+  color: rgba(255,255,255,0.45);
+  padding: 4px 0;
+}
+
+.create-space-home-geo-status.hidden {
+  display: none;
+}
+
+.create-space-home-name {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: rgba(79, 195, 247, 0.8);
+  letter-spacing: 0.2px;
+  display: none;
+}
+
+.create-space-home-name.visible {
+  display: block;
+}
+
 /* ── Safe area insets ── */
 .leaflet-bottom.leaflet-right {
   padding-right: env(safe-area-inset-right);
@@ -1271,6 +1551,11 @@ body.menu-open #menu-panel {
   }
   #locate-btn {
     bottom: 100px;
+    width: 32px;
+    height: 32px;
+  }
+  #home-btn {
+    bottom: 140px;
     width: 32px;
     height: 32px;
   }
