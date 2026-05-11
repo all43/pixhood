@@ -340,7 +340,7 @@ function showCreateSpaceConfirmModal() {
   const overlay = document.createElement('div');
   overlay.id = 'create-space-modal';
   overlay.innerHTML = `
-    <div class="create-space-box">
+    <div class="modal-box create-space-box">
       <h2>Create a Space</h2>
       <div class="create-space-text">
         <p>A Space is a private area on the map — only people with the link can paint there. It's a safe way for friends, family, and especially children to create art together without interference.</p>
@@ -348,14 +348,14 @@ function showCreateSpaceConfirmModal() {
         <p>The Space link is the only way in. Share it only with people you want to paint with — anyone with the link can join. If the link gets out, simply abandon this Space and create a new one.</p>
       </div>
       ${needsGeoPref ? `
-      <label class="create-space-geo-label">
+      <label class="create-space-check-label create-space-geo-label">
         <input type="checkbox" id="create-space-geo" checked />
         <span>Enable location<span class="create-space-geo-hint">Center the map on you</span></span>
       </label>
       ` : ''}
       <div id="create-space-home" class="create-space-home">
         ${locationGranted || needsGeoPref ? `
-        <label class="create-space-home-check-label">
+        <label class="create-space-check-label create-space-home-check-label">
           <input type="checkbox" id="create-space-home-check" />
           <span>Use my location as home area<span class="create-space-geo-hint">Others see ~1km area, not your exact position</span></span>
         </label>
@@ -372,7 +372,7 @@ function showCreateSpaceConfirmModal() {
       <div id="create-space-error" class="hidden"></div>
       <div class="create-space-buttons">
         <button class="create-space-cancel" id="create-space-cancel">Cancel</button>
-        <button class="create-space-go" id="create-space-go">Create Space</button>
+        <button class="btn-primary create-space-go" id="create-space-go">Create Space</button>
       </div>
     </div>
   `;
@@ -514,7 +514,7 @@ function showSpaceKeyModal(slug, key) {
   const overlay = document.createElement('div');
   overlay.id = 'space-key-modal';
   const spaceLink = getHomeShareLink(slug);  overlay.innerHTML = `
-    <div class="space-key-box">
+    <div class="modal-box space-key-box">
       <h2>Space Created!</h2>
       <div class="space-key-field">
         <label>Link</label>
@@ -536,7 +536,7 @@ function showSpaceKeyModal(slug, key) {
         <input type="checkbox" id="space-key-confirm" />
         I have saved my admin key (or I don't need it)
       </label>
-      <button class="space-key-continue" id="space-key-go" disabled>Continue to Space</button>
+      <button class="btn-primary space-key-continue" id="space-key-go" disabled>Continue to Space</button>
     </div>
   `;
   document.body.appendChild(overlay);
