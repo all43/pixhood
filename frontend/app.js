@@ -64,6 +64,15 @@ function resolveHomeLocation() {
   return { lat: CONFIG.DEFAULT_LAT, lng: CONFIG.DEFAULT_LNG };
 }
 
+function viewportAround(lat, lng) {
+  return {
+    n: lat + CONFIG.INIT_VIEWPORT_SPAN,
+    s: lat - CONFIG.INIT_VIEWPORT_SPAN,
+    e: lng + CONFIG.INIT_VIEWPORT_SPAN,
+    w: lng - CONFIG.INIT_VIEWPORT_SPAN
+  };
+}
+
 function getHomeShareLink(slug) {
   const key = CONFIG.HOME_KEY + ':' + slug;
   let home = null;
@@ -297,6 +306,65 @@ function exitSetHomeMode(lat, lng) {
   }
 }
 
+function createHomePicker({ container, onPickOnMap, onSelect }) {
+  let _lat = null;
+  let _lng = null;
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'home-picker';
+
+  const searchContainer = document.createElement('div');
+  searchContainer.className = 'home-picker-search';
+  wrapper.appendChild(searchContainer);
+
+  const btns = document.createElement('div');
+  btns.className = 'home-picker-btns';
+  const pickBtn = document.createElement('button');
+  pickBtn.type = 'button';
+  pickBtn.className = 'home-picker-btn';
+  pickBtn.textContent = 'Pick on map';
+  btns.appendChild(pickBtn);
+  wrapper.appendChild(btns);
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'home-picker-name';
+  wrapper.appendChild(nameEl);
+
+  container.appendChild(wrapper);
+
+  const searchRef = createLocationSearch({
+    container: searchContainer,
+    placeholder: 'Search place\u2026',
+    onSelect({ lat, lng, name }) {
+      _lat = lat;
+      _lng = lng;
+      nameEl.textContent = name.split(',').slice(0, 2).join(',');
+      nameEl.classList.add('visible');
+      if (onSelect) onSelect({ lat, lng, name });
+    }
+  });
+
+  pickBtn.addEventListener('click', () => {
+    if (onPickOnMap) onPickOnMap({ getLatLon });
+  });
+
+  function getLatLon() {
+    return { lat: _lat, lng: _lng };
+  }
+
+  function cleanup() {
+    searchRef.cleanup();
+    wrapper.remove();
+  }
+
+  function setNameText(text) {
+    nameEl.textContent = text;
+    nameEl.classList.add('visible');
+  }
+
+  return { getLatLon, setNameText, cleanup, el: wrapper };
+}
+
 function navigateTo(url) {
   if (typeof disconnectWebSocket === 'function') disconnectWebSocket();
   location.href = url;
@@ -311,21 +379,20 @@ function handleJoin(val) {
   }
 }
 
-async function requestGeoAndProceed(fallbackPromise, timeout) {
+async function requestGeoAndProceed(timeout) {
   showSpinnerScreen('Waiting for location\u2026');
   const result = await getGeolocation(timeout);
   if (result.status === 'granted') {
     const lat = result.lat || CONFIG.DEFAULT_LAT;
     const lng = result.lng || CONFIG.DEFAULT_LNG;
-    const vb = { n: lat + CONFIG.INIT_VIEWPORT_SPAN, s: lat - CONFIG.INIT_VIEWPORT_SPAN,
-                 e: lng + CONFIG.INIT_VIEWPORT_SPAN, w: lng - CONFIG.INIT_VIEWPORT_SPAN };
+    const vb = viewportAround(lat, lng);
     await proceedToMap(result, loadViewport(vb, CONFIG.DEFAULT_ZOOM));
-  } else if (result.status === 'denied') {
-    lsSet(GEO_PREF_KEY, 'denied');
-    await proceedToMap(result, fallbackPromise);
   } else {
-    lsRemove(GEO_PREF_KEY);
-    await proceedToMap(result, fallbackPromise);
+    const center = resolveHomeLocation();
+    const vb = viewportAround(center.lat, center.lng);
+    if (result.status === 'denied') lsSet(GEO_PREF_KEY, 'denied');
+    else lsRemove(GEO_PREF_KEY);
+    await proceedToMap(result, loadViewport(vb, CONFIG.DEFAULT_ZOOM));
   }
 }
 
@@ -360,13 +427,7 @@ function showCreateSpaceConfirmModal() {
           <span>Use my location as home area<span class="create-space-geo-hint">Others see ~1km area, not your exact position</span></span>
         </label>
         ` : ''}
-        <div id="create-space-home-manual" class="create-space-home-manual">
-          <div id="create-space-home-search"></div>
-          <div class="create-space-home-btns">
-            <button type="button" id="create-space-home-pick" class="create-space-home-btn">Pick on map</button>
-          </div>
-          <div id="create-space-home-name" class="create-space-home-name"></div>
-        </div>
+        <div id="create-space-home-manual" class="create-space-home-manual"></div>
         <div id="create-space-home-geo-status" class="create-space-home-geo-status hidden"></div>
       </div>
       <div id="create-space-error" class="hidden"></div>
@@ -378,26 +439,27 @@ function showCreateSpaceConfirmModal() {
   `;
   document.body.appendChild(overlay);
 
-  let homeLat = null;
-  let homeLng = null;
-  let homeName = '';
-
-  const searchContainer = document.getElementById('create-space-home-search');
-  const nameEl = document.getElementById('create-space-home-name');
-  const homeCheck = document.getElementById('create-space-home-check');
   const manualEl = document.getElementById('create-space-home-manual');
+  const homeCheck = document.getElementById('create-space-home-check');
   const geoStatusEl = document.getElementById('create-space-home-geo-status');
   const geoCheckbox = document.getElementById('create-space-geo');
 
-  const searchRef = createLocationSearch({
-    container: searchContainer,
-    placeholder: 'Search place\u2026',
-    onSelect({ lat, lng, name }) {
-      homeLat = lat;
-      homeLng = lng;
-      homeName = name;
-      nameEl.textContent = name.split(',').slice(0, 2).join(',');
-      nameEl.classList.add('visible');
+  let homeLat = null;
+  let homeLng = null;
+
+  const picker = createHomePicker({
+    container: manualEl,
+    onPickOnMap({ getLatLon }) {
+      const { lat, lng } = getLatLon();
+      enterSetHomeMode({
+        preselectedLat: lat,
+        preselectedLng: lng,
+        callback(lat, lng) {
+          homeLat = lat;
+          homeLng = lng;
+          picker.setNameText(`${lat.toFixed(1)}, ${lng.toFixed(1)}`);
+        }
+      });
     }
   });
 
@@ -421,7 +483,6 @@ function showCreateSpaceConfirmModal() {
       if (result.status === 'granted') {
         homeLat = result.lat;
         homeLng = result.lng;
-        homeName = '';
         geoStatusEl.textContent = `\u2713 ${result.lat.toFixed(1)}, ${result.lng.toFixed(1)}`;
       } else {
         homeCheck.checked = false;
@@ -454,21 +515,8 @@ function showCreateSpaceConfirmModal() {
 
   updateHomeCheckVisibility();
 
-  document.getElementById('create-space-home-pick').addEventListener('click', () => {
-    enterSetHomeMode({
-      preselectedLat: homeLat,
-      preselectedLng: homeLng,
-      callback(lat, lng) {
-        homeLat = lat;
-        homeLng = lng;
-        nameEl.textContent = `${lat.toFixed(1)}, ${lng.toFixed(1)}`;
-        nameEl.classList.add('visible');
-      }
-    });
-  });
-
   document.getElementById('create-space-cancel').addEventListener('click', () => {
-    searchRef.cleanup();
+    picker.cleanup();
     overlay.remove();
   });
 
@@ -487,10 +535,13 @@ function showCreateSpaceConfirmModal() {
       if (geoCheckbox) {
         lsSet(GEO_PREF_KEY, geoCheckbox.checked ? 'granted' : 'skipped');
       }
+      const { lat, lng } = picker.getLatLon();
       if (homeLat !== null && homeLng !== null) {
         setHomeLocation(homeLat, homeLng);
+      } else if (lat !== null && lng !== null) {
+        setHomeLocation(lat, lng);
       }
-      searchRef.cleanup();
+      picker.cleanup();
       overlay.remove();
       if (key) {
         showSpaceKeyModal(slug, key);
@@ -963,7 +1014,11 @@ function handleLocationResult(result) {
       }
       break;
     case 'skipped':
-      showLocationBanner('Painting in Berlin. Tap the locate button in the bottom-right corner to use your location.');
+      if (getHomeLocation()) {
+        showLocationBanner('Tap the locate button in the bottom-right corner to use your exact location.');
+      } else {
+        showLocationBanner('Painting in Berlin. Tap the locate button in the bottom-right corner to use your location.');
+      }
       break;
     case 'denied':
       showLocationBanner('Location blocked — check browser settings to paint where you are.');
@@ -1370,18 +1425,60 @@ async function init() {
     }
   }
 
+  const defaultCenter = resolveHomeLocation();
   const geoPromise = (async () => {
-    const vb = { n: CONFIG.DEFAULT_LAT + CONFIG.INIT_VIEWPORT_SPAN, s: CONFIG.DEFAULT_LAT - CONFIG.INIT_VIEWPORT_SPAN, e: CONFIG.DEFAULT_LNG + CONFIG.INIT_VIEWPORT_SPAN, w: CONFIG.DEFAULT_LNG - CONFIG.INIT_VIEWPORT_SPAN };
+    const vb = viewportAround(defaultCenter.lat, defaultCenter.lng);
     return loadViewport(vb, CONFIG.DEFAULT_ZOOM);
   })();
 
+  const welcome = document.getElementById('welcome');
+
   document.getElementById('btn-enable-geo').addEventListener('click', async () => {
-    await requestGeoAndProceed(geoPromise, CONFIG.GEO_DEFAULT_TIMEOUT);
+    await requestGeoAndProceed(CONFIG.GEO_DEFAULT_TIMEOUT);
   });
 
-  document.getElementById('btn-skip-geo').addEventListener('click', async () => {
-    lsSet(GEO_PREF_KEY, 'skipped');
-    await proceedToMap({ status: 'skipped' }, geoPromise);
+  document.getElementById('btn-skip-geo').addEventListener('click', () => {
+    welcome.classList.add('skip-mode');
+    const picker = createHomePicker({
+      container: welcome,
+      onPickOnMap: async ({ getLatLon }) => {
+        const { lat, lng } = getLatLon();
+        const home = lat !== null ? { lat, lng } : defaultCenter;
+        if (lat !== null) setHomeLocation(lat, lng);
+        lsSet(GEO_PREF_KEY, 'skipped');
+        const vb = viewportAround(home.lat, home.lng);
+        await proceedToMap({ status: 'skipped', lat: home.lat, lng: home.lng }, loadViewport(vb, CONFIG.DEFAULT_ZOOM));
+        enterSetHomeMode({
+          preselectedLat: home.lat,
+          preselectedLng: home.lng,
+          callback(lat, lng) { setHomeLocation(lat, lng); }
+        });
+      },
+      onSelect: async ({ lat, lng }) => {
+        setHomeLocation(lat, lng);
+        lsSet(GEO_PREF_KEY, 'skipped');
+        const vb = viewportAround(lat, lng);
+        await proceedToMap({ status: 'skipped', lat, lng }, loadViewport(vb, CONFIG.DEFAULT_ZOOM));
+      }
+    });
+    welcome._skipPicker = picker;
+
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'home-picker-default';
+    backBtn.textContent = '\u2190 Back';
+    backBtn.addEventListener('click', () => {
+      welcome.classList.remove('skip-mode');
+      picker.cleanup();
+      welcome._skipPicker = null;
+    });
+    picker.el.append(backBtn);
+
+    const refNode = welcome.querySelector('#welcome-error');
+    if (refNode) welcome.insertBefore(picker.el, refNode);
+
+    const searchInput = picker.el.querySelector('.location-search-input');
+    if (searchInput) searchInput.focus();
   });
 
   const pref = lsGet(GEO_PREF_KEY);
@@ -1400,12 +1497,18 @@ async function init() {
       return;
     }
 
-    await requestGeoAndProceed(geoPromise, CONFIG.GEO_GRANTED_TIMEOUT);
+    await requestGeoAndProceed(CONFIG.GEO_GRANTED_TIMEOUT);
     return;
   }
 
   if (pref === 'skipped') {
-    await proceedToMap({ status: 'skipped' }, geoPromise);
+    const home = getHomeLocation();
+    if (home) {
+      const vb = viewportAround(home.lat, home.lng);
+      await proceedToMap({ status: 'skipped', lat: home.lat, lng: home.lng }, loadViewport(vb, CONFIG.DEFAULT_ZOOM));
+    } else {
+      await proceedToMap({ status: 'skipped' }, geoPromise);
+    }
     return;
   }
 

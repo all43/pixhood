@@ -384,11 +384,30 @@ html, body {
   color: rgba(233, 69, 96, 0.85);
 }
 
+#welcome.skip-mode .location-cta:not(.skip-cta) {
+  display: none;
+}
+
+#welcome.skip-mode .skip-cta {
+  display: block;
+}
+
+#welcome-text .skip-cta {
+  display: none;
+}
+
 #welcome-buttons {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   width: 100%;
+}
+
+#welcome.skip-mode #welcome-buttons,
+#welcome.skip-mode #welcome-divider,
+#welcome.skip-mode #welcome-space-buttons,
+#welcome.skip-mode #join-space-form {
+  display: none;
 }
 
 #btn-enable-geo {
@@ -1320,6 +1339,10 @@ body.set-home-mode #topbar {
   pointer-events: none;
 }
 
+body.set-home-mode #location-banner {
+  display: none;
+}
+
 .set-home-ui {
   position: absolute;
   inset: 0;
@@ -1395,7 +1418,79 @@ body.set-home-mode #topbar {
   cursor: not-allowed;
 }
 
-/* ── Space creation home area section ── */
+/* ── Home picker (reused in welcome + create-space) ── */
+.home-picker {
+  margin-top: 8px;
+}
+
+#welcome > .home-picker {
+  display: none;
+  margin-top: 4px;
+  width: 100%;
+}
+
+#welcome.skip-mode > .home-picker {
+  display: block;
+}
+
+.home-picker-search {
+}
+
+.home-picker-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.home-picker-btn {
+  flex: 1;
+  background: transparent;
+  color: rgba(255,255,255,0.5);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.75rem;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+.home-picker-btn:hover {
+  border-color: rgba(255,255,255,0.3);
+  color: rgba(255,255,255,0.75);
+}
+
+.home-picker-name {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: rgba(79, 195, 247, 0.8);
+  letter-spacing: 0.2px;
+  display: none;
+}
+
+.home-picker-name.visible {
+  display: block;
+}
+
+.home-picker-default {
+  display: block;
+  margin-top: 12px;
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.3);
+  text-decoration: none;
+  letter-spacing: 0.3px;
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.home-picker-default:hover {
+  color: rgba(255,255,255,0.6);
+}
+
+/* ── Create-space home section ── */
 .create-space-home {
   margin: 16px 0;
 }
@@ -1423,30 +1518,6 @@ body.set-home-mode #topbar {
   display: none;
 }
 
-.create-space-home-btns {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.create-space-home-btn {
-  flex: 1;
-  background: transparent;
-  color: rgba(255,255,255,0.5);
-  border: 1px solid rgba(255,255,255,0.12);
-  padding: 6px 8px;
-  font: inherit;
-  font-size: 0.75rem;
-  letter-spacing: 0.3px;
-  cursor: pointer;
-  transition: border-color 0.2s ease, color 0.2s ease;
-}
-
-.create-space-home-btn:hover {
-  border-color: rgba(255,255,255,0.3);
-  color: rgba(255,255,255,0.75);
-}
-
 .create-space-home-geo-status {
   font-size: 0.75rem;
   color: rgba(255,255,255,0.45);
@@ -1455,18 +1526,6 @@ body.set-home-mode #topbar {
 
 .create-space-home-geo-status.hidden {
   display: none;
-}
-
-.create-space-home-name {
-  margin-top: 8px;
-  font-size: 0.7rem;
-  color: rgba(79, 195, 247, 0.8);
-  letter-spacing: 0.2px;
-  display: none;
-}
-
-.create-space-home-name.visible {
-  display: block;
 }
 
 /* ── Safe area insets ── */
