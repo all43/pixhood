@@ -2,7 +2,13 @@ const crypto = require('crypto')
 const { createClient } = require('redis')
 const { SPACE_SLUG_RE } = require('./shared/space')
 
-const client = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' })
+const client = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379',
+  socket: {
+    keepAlive: 15000,
+    reconnectStrategy: retries => Math.min(retries * 100, 3000)
+  }
+})
 
 client.on('error', err => console.error('Redis error:', err))
 
