@@ -768,7 +768,7 @@ html, body {
   display: block;
   position: absolute;
   left: 0;
-  width: 100%;
+  right: 0;
   height: 2px;
   background: rgba(255,255,255,0.8);
   border-radius: 1px;
@@ -776,7 +776,7 @@ html, body {
 }
 
 #menu-btn span {
-  top: 8px;
+  top: calc(50% - 1px);
 }
 
 #menu-btn::before {
@@ -794,13 +794,14 @@ body.menu-open #menu-btn span {
 }
 
 body.menu-open #menu-btn::before {
-  top: 8px;
+  top: calc(50% - 1px);
   transform: rotate(45deg);
 }
 
 body.menu-open #menu-btn::after {
-  bottom: 8px;
+  top: calc(50% - 1px);
   transform: rotate(-45deg);
+  bottom: auto;
 }
 
 #menu-backdrop {
