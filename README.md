@@ -196,6 +196,46 @@ pixhood/
 Frontend: **Cloudflare Pages** ([pixhood.art](https://pixhood.art))
 Backend: **Fly.io** ([api.pixhood.art](https://api.pixhood.art)) + managed Redis
 
+### Fly.io setup (first time)
+
+1. Install [flyctl](https://fly.io/docs/hands-on/install-flyctl/) and sign up:
+
+```bash
+fly auth signup
+```
+
+2. Create a Redis instance (Upstash free tier):
+
+```bash
+fly redis create
+# Choose region, select free plan, note the connection URL
+```
+
+3. Launch the app in `server/`:
+
+```bash
+cd server
+fly launch
+# Don't deploy yet — set secrets first
+```
+
+4. Set required secrets:
+
+```bash
+fly secrets set REDIS_URL=redis://default:<password>@<host>:6379
+fly secrets set ADMIN_API_KEY=<your-admin-key>
+fly secrets set SPACE_KEY_SECRET=<random-secret-for-space-keys>
+fly secrets set CORS_ORIGIN=https://your-domain.com
+```
+
+5. Deploy:
+
+```bash
+fly deploy
+```
+
+### Subsequent deploys
+
 ```bash
 # Backend
 cd server && fly deploy
