@@ -163,7 +163,7 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 
 **Admin**: Admin endpoints accept either global `ADMIN_API_KEY` (via `checkAdminAuth`) or space-derived admin key (via `checkSpaceAdminAuth`). Space keys are verified by recomputing `HMAC-SHA256(SPACE_KEY_SECRET, slug)` and comparing with timing-safe equality. Space keys are scoped: they only work for their own space and fail for global (no `space` param) or other spaces' endpoints. `POST /admin/verify` accepts optional `?space=<slug>` query param to verify space keys.
 
-**Frontend**: `CONFIG.SPACE` parsed from URL path in `config.js`. Passed as query param to HTTP API calls and as WS connection param. Welcome screen shows "Create Space" / "Join Space" buttons. Topbar shows space slug with copy-link button when inside a space. Space creation shows a key modal with copy/download/checkbox-gated continuation. Space admin key stored in `localStorage` as `space_key:<slug>`. Side-menu shows "Manage Space" button when key is stored, which opens the admin panel.
+**Frontend**: `CONFIG.SPACE` parsed from URL path in `config.js`. Passed as query param to HTTP API calls and as WS connection param. Welcome screen shows "Create Space" / "Join Space" buttons. Create Space modal includes safety text, optional geo/home integration, and Nominatim location picker. Space Key Modal shows link (with home coordinates) + admin key with copy/download/checkbox-gated continuation. Side menu: hamburger with Set Home, Create/Join Space, Install App, Privacy, About; space section with slug, Copy Link, Manage Space, Leave Space. See `.claude/rules/space-ux.md` for full modal/menu details.
 
 **Service worker**: Navigation to `/s/<slug>` handled by existing network-first strategy. Cloudflare Pages `_redirects` serves `index.html` for all `/s/*` paths.
 
@@ -177,7 +177,7 @@ Isolated painting environments with separate pixel data. Used for kids' safety, 
 | `space:<slug>:pixel:<tileKey>` | String | 24h | Parent pixel JSON (space-scoped) |
 | `space:<slug>:subpixels:<tileKey>` | Hash | 24h | Child pixels (space-scoped) |
 | `space:<slug>:pixels:geo` | Sorted Set | — | Viewport geo index (space-scoped) |
-| `protected_regions` | List | — | JSON region records `{id, n, s, e, w}` (global). Per-space: `space:<slug>:protected_regions` |
+| `protected_regions` | List | — | JSON region records `{id, n, s, e, w}` (global). Per-space: `space:<slug>:protected_regions`. API returns computed polygon outlines `{id, outline, tileKeys}` — see `.claude/rules/admin-features.md` |
 | `protected_tiles` | Set | — | Materialized tile keys from all regions for fast SISMEMBER (global). Per-space: `space:<slug>:protected_tiles` |
 | `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log: score=timestamp, value=JSON with `type` (`parent`/`child`/`erase`), `space` field + previous state for revert |
 | `ratelimit:<prefix>:<ip>` | String | 1 min | IP rate limit counter (global reads) |
@@ -197,7 +197,7 @@ Reading subpixels (`getSubpixels`) resets the subpixels hash TTL — but does NO
 |--------|------|-------------|
 | `GET` | `/health` | Health check, returns `{status:'ok'}`. No auth required. |
 | `GET` | `/pixels?n=&s=&e=&w=&space=` | Viewport query: pixels in bounding box. Always includes children. Optional `space` param. |
-| `GET` | `/protected-regions?space=` | List all protected regions (public, no auth). Returns `[{id, n, s, e, w}]`. |
+| `GET` | `/protected-regions?space=` | List all protected regions (public, no auth). Returns `[{id, outline, tileKeys}]` with computed polygon outlines. |
 | `POST` | `/spaces` | Create space: returns `{ slug, key }`. Rate-limited 10/min per IP. No auth required. Key is null if SPACE_KEY_SECRET not configured. |
 | `POST` | `/pixels` | Save parent pixel (admin only). Erases children, broadcasts. |
 | `POST` | `/pixels/child` | Save child pixel (admin only). Broadcasts. |
@@ -262,15 +262,19 @@ Client-side paint log (`_paintLog` array, max 20 entries, each with `lat`/`lng`)
 
 ## Geolocation
 
-The app uses `navigator.geolocation.getCurrentPosition` with `enableHighAccuracy: false` and `maximumAge: 300000` (5 min cache to avoid Chrome timeout issues).
+The app uses `navigator.geolocation.getCurrentPosition` with `enableHighAccuracy: true` (workaround for Chromium bug where `false` causes requests to never resolve). Two-phase acquisition: fast cached attempt (`maximumAge: 5min`, `timeout: 2s`) → stored position fallback (`last_geo` localStorage) → fresh request (`maximumAge: 0`). Config constants: `GEO_FAST_TIMEOUT: 2000`, `GEO_GRANTED_TIMEOUT: 10000`, `GEO_DEFAULT_TIMEOUT: 60000`.
 
-Permission flow:
-- First-time visitors see a welcome screen with an "Enable location" button that triggers the native system dialog.
-- Returning visitors with `geo_pref = 'granted'` in localStorage get geolocation automatically.
-- On reload, the app queries `navigator.permissions.query()` first. If the state is `"prompt"` (e.g., Safari one-time grant expired), it clears `geo_pref` and shows the welcome screen again.
-- On timeout, `geo_pref` is cleared so the welcome screen shows on next reload.
-- `status: 'denied'` from `permissions.query` short-circuits without calling `getCurrentPosition` (avoids unnecessary system dialog).
-- `status: 'prompt'` from `permissions.query` does NOT short-circuit — it falls through to `getCurrentPosition` which triggers the native dialog.
+Permission states (`geo_pref` in localStorage):
+- `'granted'` — auto-requests geolocation on return visits, sets home on first grant
+- `'skipped'` — "Continue without" flow: shows home picker (Nominatim search + "Pick on map"), centers on home location on return visits
+- `'denied'` — proceeds to map at home/Berlin with location banner
+- Missing — shows welcome screen
+
+On reload, `navigator.permissions.query()` checks actual state. `"prompt"` (e.g. Safari one-time grant expired) clears `geo_pref` and shows welcome screen. `"denied"` short-circuits without calling `getCurrentPosition`. `"prompt"` falls through to `getCurrentPosition` which triggers native dialog.
+
+## Home Location
+
+Client-side-only feature (no server involvement). Users save a preferred map center in localStorage: key `home` (global) or `home:<slug>` (per-space). Resolution chain: space home → global home → Berlin default. Home button (short press = fly to home, long press = set home). Set Home mode: full-screen map with draggable pin, 1.1km radius circle, Nominatim search. Space links include `?lat=&lng=` coordinates at 1-decimal precision. See `.claude/rules/home-location.md` and `.claude/rules/geolocation.md` for full details.
 
 ## Key decisions
 
@@ -282,14 +286,14 @@ Permission flow:
 - **Native WebSocket over Socket.io**: fewer dependencies, sufficient for broadcast-only real-time.
 - **Viewport-scoped broadcasts**: clients subscribe with bounds, server only forwards relevant updates. Avoids O(clients×paints) wasted messages.
 - **Single Fly.io machine**: in-memory WS state requires a single machine; cross-machine pub/sub not implemented.
-- **`maximumAge: 300000`** on geolocation: allows Chrome to return cached position instantly instead of timing out when the network location provider is slow.
+- **`enableHighAccuracy: true`** on geolocation: Chromium bug causes `enableHighAccuracy: false` to never resolve. Two-phase fallback: fast cached → stored position → fresh request.
 - **Erase as sentinel color**: Erasing uses `__erase__` sentinel color (`CONFIG.ERASE_COLOR`). Client sends `paintErase` WS message without color field. Server deletes pixel key, sub-pixel hash, and geo entry. Previous state logged to paint log for undo.
 - **Viewport-aware debounced undo**: Undo tile batches taps within 500ms window into a single `undoPaint` message with `count: N`. Client-side paint log (max 20 entries) tracks recent paints with lat/lng. Only consecutive paints from the tail within the current viewport count toward undo. Button disabled when 0 viewport paints. Button flashes on tap, count toast during debounce, screen flashes white on undo fire. Server pops N entries from paint log and restores tiles atomically. Guarded by `revertingSessions` in-memory set to prevent concurrent undo.
 - **Erase broadcasts**: Server sends `clearChildren` before `deletePixel` so clients remove child renders first.
 - **No build step**: prototype stays simple, `node index.js` and open browser.
 - **Protection via regions + Set**: Protected regions stored as rectangles in Redis List. Materialized `protected_tiles` Set rebuilt from regions for fast `SISMEMBER` checks. Paint handlers check Set for empty tiles (one Redis call), pixel JSON `protected` field for existing pixels (zero extra cost).
 - **TTL as enforcement**: Both protection and TTL extension use Redis TTL as the enforcement mechanism. Protected pixels have TTL -1 (PERSIST). Extended pixels have TTL > 24h (30 days). `getSubpixelsMulti` checks parent TTL to determine correct subpixels EXPIRE duration.
-- **Merged region borders**: Protected regions render gold dashed polylines around merged outlines. `mergeRectangles()` iteratively merges overlapping/adjacent rectangles. Overlapping regions draw only their outer perimeter.
+- **Merged region borders**: Protected regions render gold dashed polylines around server-computed polygon outlines. `computeRegionOutlines()` uses BFS connected-component + directed-edge tracing to merge adjacent tiles into single outlines. Overlapping regions draw only their outer perimeter.
 - **Region mode reuse**: All three admin region operations (erase, protect, extend TTL) share a single generic `REGION_MODES` config and `activateRegionMode()`/`deactivateRegionMode()` functions, eliminating duplicated drawing/event code.
 - **Zombie WS detection on visibility resume**: Fly.io's `auto_stop_machines` can suspend the backend overnight, killing the WS connection silently — the browser's `readyState` stays 1 (OPEN). On `visibilitychange → visible`, if `_lastPongTime` is stale (>65s), the client sends a probe ping and waits 3s. Pong arrives → alive, continue. No pong → zombie, force reconnect. Quick tab switches (<65s between visible sessions) skip the probe entirely and just restart the heartbeat.
 
@@ -407,11 +411,11 @@ No IP addresses shown anywhere in the admin UI.
 
 Admin-protected areas that cannot be painted on — including empty tiles. Used for preserving art or preventing vandalism in sensitive areas.
 
-**Data model**: Protected regions are stored as rectangles in a Redis List (`protected_regions` / `space:<slug>:protected_regions`). Each entry is `{id: "reg_<8hex>", n, s, e, w}`. A materialized `protected_tiles` Set (`space:<slug>:protected_tiles`) is rebuilt from all regions for fast `SISMEMBER` checks. Existing painted pixels in the region get `protected: true` in their JSON and are `PERSIST`ed (no TTL, permanent). Subpixels hashes are also `PERSIST`ed.
+**Data model**: Protected regions are stored as rectangles in a Redis List (`protected_regions` / `space:<slug>:protected_regions`). Each entry is `{id: "reg_<8hex>", n, s, e, w}`. A materialized `protected_tiles` Set (`space:<slug>:protected_tiles`) is rebuilt from all regions for fast `SISMEMBER` checks. Existing painted pixels in the region get `protected: true` in their JSON and are `PERSIST`ed (no TTL, permanent). Subpixels hashes are also `PERSIST`ed. API responses return computed polygon outlines `{id, outline: [[lat,lng],...], tileKeys: [...]}` via server-side BFS connected-component + edge-tracing (`computeRegionOutlines()` in `redis.js`). See `.claude/rules/admin-features.md` for full algorithm details.
 
 **Paint rejection**: Paint handlers check `SISMEMBER protected_tiles:<space> <tileKey>` when no existing pixel is found (one Redis call for empty tiles). For existing pixels, `prevPixel.protected` is checked (zero extra cost since pixel is already fetched). Rejected with `paintError { reason: 'protected' }`.
 
-**Frontend rendering**: Protected regions display a gold dashed border (`#FFD700`, weight 2px) around the region outline. `mergeRectangles()` merges overlapping/adjacent regions so borders are drawn only on the outer perimeter. `fetchProtectedRegions()` loads from `GET /protected-regions` (public, no auth). Borders visible at zoom ≥ 16. Toast "This area is protected" shown on rejected paint attempts. WS `protectedRegionsChanged` message triggers region refetch and border re-render.
+**Frontend rendering**: Protected regions display a gold dashed border (`CONFIG.PROTECTED_BORDER_COLOR`, `CONFIG.PROTECTED_BORDER_WEIGHT`) around the polygon outline from the API. Point-in-polygon hover detection (`isInProtectedRegion()` using ray-casting, throttled 100ms) adds cursor feedback. `fetchProtectedRegions()` loads from `GET /protected-regions` (public, no auth). Borders visible at zoom ≥ 16. Toast "This area is protected" shown on rejected paint attempts. WS `protectedRegionsChanged` message triggers region refetch and border re-render.
 
 **Subpixels**: `getSubpixelsMulti` uses a two-pipeline approach — HGETALL + TTL per parent, then conditional EXPIRE: protected parents (TTL -1) → PERSIST subpixels; extended parents (TTL > 24h) → use parent's remaining TTL; default → 24h EXPIRE.
 

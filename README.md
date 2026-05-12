@@ -17,11 +17,12 @@
 ## What it does
 
 - Open the app → welcome screen explains why location is useful, then asks permission
-- Map centers on your location (Berlin fallback)
+- Map centers on your location (Berlin fallback), or pick a place on the map
 - Pick a color, click anywhere on the map → paint a pixel tied to real-world coordinates
 - Everyone sees each other's paintings in real time via WebSocket
 - Zoom in past zoom 21 → each pixel reveals a 16×16 sub-grid for detailed art
 - Undo your last paint or erase a pixel you placed
+- Set a home location to fly back to; share space links with embedded coordinates
 - All pixels expire after 24h — canvas resets daily, no moderation needed
 - Works on desktop and mobile Safari/Chrome (installable PWA)
 
@@ -47,7 +48,7 @@ Pixels are stored as individual keys with 24h TTL for natural expiry. A sorted s
 
 ### Cross-browser geolocation
 
-Handles Safari one-time grants (permission state `"prompt"` after expiry), Chrome network-location timeouts (`maximumAge: 300000` for cached position fallback), and tab-background throttling. Uses `navigator.permissions.query()` to short-circuit denied state without triggering unnecessary system dialogs.
+Handles Safari one-time grants (permission state `"prompt"` after expiry), Chrome network-location timeouts (two-phase fallback: cached position → stored position → fresh request), and tab-background throttling. Uses `enableHighAccuracy: true` to work around a Chromium bug. Users can skip geolocation and pick a location on the map instead. Uses `navigator.permissions.query()` to short-circuit denied state without triggering unnecessary system dialogs.
 
 ### Installable PWA
 
@@ -133,8 +134,11 @@ Sessions are anonymous and server-generated — a `sess_<hex>` ID stored in `loc
 | `pixel:<tileKey>` | String | 24h | Parent pixel JSON |
 | `subpixels:<tileKey>` | Hash | 24h | Child pixels: field=`subX_subY`, value=JSON |
 | `pixels:geo` | Sorted Set | — | GEOADD/GEOSEARCH for viewport queries |
-| `space:<slug>` | String | — | Space metadata |
-| `protected:<tileKey>` | String | — | Protected tile marker |
+| `space:<slug>:pixel:<tileKey>` | String | 24h | Space-scoped parent pixel JSON |
+| `space:<slug>:pixels:geo` | Sorted Set | — | Space-scoped viewport geo index |
+| `protected_regions` | List | — | JSON region records |
+| `protected_tiles` | Set | — | Materialized tile keys for fast SISMEMBER |
+| `paintlog:<sessionId>` | Sorted Set | 24h | Paint audit log for revert |
 
 ---
 
@@ -177,6 +181,11 @@ pixhood/
 │   ├── Dockerfile
 │   └── package.json
 ├── CLAUDE.md          # Developer documentation
+├── .claude/rules/     # Detailed feature docs (loaded by AI tools)
+│   ├── home-location.md
+│   ├── space-ux.md
+│   ├── geolocation.md
+│   └── admin-features.md
 └── README.md          # User-facing docs
 ```
 
