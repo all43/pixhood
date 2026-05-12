@@ -402,13 +402,19 @@ function createHomeButton() {
 function flyToHome() {
   const home = resolveHomeLocation();
   if (typeof map !== 'undefined') {
+    const btn = document.getElementById('home-btn');
+    btn.classList.add('locating');
+    setTimeout(() => btn.classList.remove('locating'), TAP_FEEDBACK_MS);
     map.setView([home.lat, home.lng], CONFIG.DEFAULT_ZOOM, { animate: true });
   }
 }
 
+const LOCATE_FORCE_FRESH_MS = 30000;
+// Minimum duration for button tap feedback pulse (locate, home)
+const TAP_FEEDBACK_MS = 800;
+
 let _lastLocateTap = 0;
 let _locating = false;
-const LOCATE_FORCE_FRESH_MS = 30000;
 
 async function handleLocate() {
   if (_locating) return;
@@ -416,13 +422,15 @@ async function handleLocate() {
   const btn = document.getElementById('locate-btn');
   btn.classList.add('locating');
 
-  const now = Date.now();
-  const forceFresh = (now - _lastLocateTap) < LOCATE_FORCE_FRESH_MS;
-  _lastLocateTap = now;
+  const t0 = Date.now();
+  const forceFresh = (t0 - _lastLocateTap) < LOCATE_FORCE_FRESH_MS;
+  _lastLocateTap = t0;
 
   const result = await getGeolocation(CONFIG.GEO_DEFAULT_TIMEOUT, { forceFresh });
 
-  btn.classList.remove('locating');
+  const remaining = TAP_FEEDBACK_MS - (Date.now() - t0);
+  setTimeout(() => btn.classList.remove('locating'), remaining);
+
   _locating = false;
 
   if (result.status === 'granted') {

@@ -263,16 +263,20 @@ html, body {
   align-items: center;
   justify-content: center;
   transition: border-color 0.2s ease, background 0.2s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
-#locate-btn:hover {
-  border-color: #e94560;
-  background: #22223a;
+@media (hover: hover) {
+  #locate-btn:hover, #home-btn:hover {
+    border-color: #e94560;
+    background: #22223a;
+  }
 }
 
-#locate-btn.locating {
+#locate-btn.locating, #home-btn.locating {
   opacity: 0.5;
   cursor: progress;
+  border-color: #e94560;
 }
 
 @keyframes locate-pulse {
@@ -280,7 +284,7 @@ html, body {
   50% { opacity: 0.2; }
 }
 
-#locate-btn.locating .locate-icon {
+#locate-btn.locating .locate-icon, #home-btn.locating svg {
   animation: locate-pulse 1.2s ease-in-out infinite;
 }
 
@@ -1240,11 +1244,7 @@ body.menu-open #menu-panel {
   justify-content: center;
   transition: border-color 0.2s ease, background 0.2s ease;
   padding: 0;
-}
-
-#home-btn:hover {
-  border-color: #e94560;
-  background: #22223a;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #home-btn svg {
