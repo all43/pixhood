@@ -16,9 +16,6 @@ html, body {
   overflow: hidden;
   font-family: 'Courier New', Courier, monospace;
   background: #1a1a2e;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 #app {
@@ -26,8 +23,6 @@ html, body {
   flex-direction: column;
   height: 100%;
   position: relative;
-  user-select: none;
-  -webkit-touch-callout: none;
 }
 
 #welcome-error,
@@ -177,9 +172,6 @@ html, body {
   flex: 1;
   cursor: crosshair;
   touch-action: manipulation;
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 .leaflet-control {
@@ -193,6 +185,15 @@ html, body {
   -webkit-user-select: none;
   user-select: none;
   outline: none;
+}
+
+/* Prevent iOS sub-pixel tile seams during scroll/zoom */
+.leaflet-tile {
+  -webkit-backface-visibility: hidden;
+  outline: 1px solid transparent;
+}
+.leaflet-tile-pane {
+  -webkit-backface-visibility: hidden;
 }
 
 #map.no-paint {
