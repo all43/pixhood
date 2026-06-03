@@ -139,7 +139,12 @@ aboutHtml = aboutHtml.replace('{{BUILD_DATE}}', buildDate);
 fs.writeFileSync(path.join(DIST_DIR, 'about.html'), aboutHtml);
 console.log('  about.html');
 
-// Copy public/ contents (icons, manifest, headers)
+// Generate iOS startup images (solid-color splash screens)
+console.log('\nGenerating iOS startup images...');
+const { execSync } = require('child_process');
+execSync('node scripts/generate-startup-images.js', { cwd: __dirname, stdio: 'inherit' });
+
+// Copy public/ contents (icons, manifest, headers, startup images)
 if (fs.existsSync(PUBLIC_DIR)) {
   const publicFiles = fs.readdirSync(PUBLIC_DIR);
   publicFiles.forEach(file => {
