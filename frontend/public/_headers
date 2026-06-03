@@ -3,8 +3,20 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
+/s/*
+  X-Robots-Tag: noindex
+
 /index.html
   Cache-Control: no-cache, no-store, must-revalidate
+
+/robots.txt
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Cache-Control: public, max-age=3600
+
+/og-image.png
+  Cache-Control: public, max-age=31536000, immutable
 
 /about.html
   Cache-Control: public, max-age=3600, stale-while-revalidate=86400

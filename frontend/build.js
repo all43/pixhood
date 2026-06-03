@@ -139,11 +139,6 @@ aboutHtml = aboutHtml.replace('{{BUILD_DATE}}', buildDate);
 fs.writeFileSync(path.join(DIST_DIR, 'about.html'), aboutHtml);
 console.log('  about.html');
 
-// Generate iOS startup images (solid-color splash screens)
-console.log('\nGenerating iOS startup images...');
-const { execSync } = require('child_process');
-execSync('node scripts/generate-startup-images.js', { cwd: __dirname, stdio: 'inherit' });
-
 // Copy public/ contents (icons, manifest, headers, startup images)
 if (fs.existsSync(PUBLIC_DIR)) {
   const publicFiles = fs.readdirSync(PUBLIC_DIR);
@@ -155,6 +150,14 @@ if (fs.existsSync(PUBLIC_DIR)) {
       console.log(`  ${file}`);
     }
   });
+}
+
+// Stamp sitemap.xml lastmod with build date
+const sitemapDest = path.join(DIST_DIR, 'sitemap.xml');
+if (fs.existsSync(sitemapDest)) {
+  const sitemap = fs.readFileSync(sitemapDest, 'utf8').replace(/\{\{BUILD_DATE\}\}/g, buildDate);
+  fs.writeFileSync(sitemapDest, sitemap);
+  console.log('  sitemap.xml (stamped)');
 }
 
 // Generate service worker with precache manifest
