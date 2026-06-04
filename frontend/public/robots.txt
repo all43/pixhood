@@ -1,5 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /s/
+Disallow: /cdn-cgi/
 
 Sitemap: https://pixhood.art/sitemap.xml
