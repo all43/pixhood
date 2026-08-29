@@ -50,7 +50,7 @@ const CONFIG = {
 
   // Map rendering
   MAX_ZOOM: 22,
-  TILE_URL: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+  TILE_URL: 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key=cb1_2idp_1_82576e58393e50d2e8b9072a',
   TILE_SUBDOMAINS: 'abcd',
   SUB_GRID_COLOR: 'rgba(255,255,255,0.04)',
   SUB_GRID_BORDER_COLOR: 'rgba(255,255,255,0.2)',
