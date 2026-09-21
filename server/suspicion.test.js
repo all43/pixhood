@@ -189,49 +189,48 @@ describe('free pass', () => {
 describe('shouldAutoRevert', () => {
   it('returns true when outside_viewport flags >= FLAG_COUNT within window', () => {
     const now = 1000000
-    const flags = [
-      { reason: 'outside_viewport', time: now - 100 },
-      { reason: 'outside_viewport', time: now - 50 },
-      { reason: 'outside_viewport', time: now }
-    ]
+    const flags = Array.from({ length: S.AUTO_REVERT.FLAG_COUNT }, (_, i) => ({
+      reason: 'outside_viewport',
+      time: now - i * 10
+    }))
     expect(S.shouldAutoRevert(flags, null, now)).toBe(true)
   })
 
   it('returns false when flags < FLAG_COUNT', () => {
     const now = 1000000
-    const flags = [
-      { reason: 'outside_viewport', time: now - 100 },
-      { reason: 'outside_viewport', time: now }
-    ]
+    const flags = Array.from({ length: S.AUTO_REVERT.FLAG_COUNT - 1 }, (_, i) => ({
+      reason: 'outside_viewport',
+      time: now - i * 10
+    }))
     expect(S.shouldAutoRevert(flags, null, now)).toBe(false)
   })
 
   it('returns false when flags are outside window', () => {
     const now = 1000000
-    const flags = [
-      { reason: 'outside_viewport', time: now - 700000 },
-      { reason: 'outside_viewport', time: now - 600001 },
-      { reason: 'outside_viewport', time: now }
-    ]
+    const flags = Array.from({ length: S.AUTO_REVERT.FLAG_COUNT }, (_, i) => ({
+      reason: 'outside_viewport',
+      time: now - S.AUTO_REVERT.FLAG_WINDOW_MS - 1000 - i * 10
+    }))
     expect(S.shouldAutoRevert(flags, null, now)).toBe(false)
   })
 
   it('returns false when only excessive_distance flags are present', () => {
     const now = 1000000
-    const flags = [
-      { reason: 'excessive_distance', time: now - 100 },
-      { reason: 'excessive_distance', time: now - 50 },
-      { reason: 'excessive_distance', time: now }
-    ]
+    const flags = Array.from({ length: S.AUTO_REVERT.FLAG_COUNT }, (_, i) => ({
+      reason: 'excessive_distance',
+      time: now - i * 10
+    }))
     expect(S.shouldAutoRevert(flags, null, now)).toBe(false)
   })
 
   it('returns false when excessive_distance flags dilute viewport flags below threshold', () => {
     const now = 1000000
     const flags = [
-      { reason: 'outside_viewport', time: now - 100 },
-      { reason: 'excessive_distance', time: now - 50 },
-      { reason: 'outside_viewport', time: now }
+      ...Array.from({ length: S.AUTO_REVERT.FLAG_COUNT - 1 }, (_, i) => ({
+        reason: 'outside_viewport',
+        time: now - (i + 1) * 10
+      })),
+      { reason: 'excessive_distance', time: now }
     ]
     expect(S.shouldAutoRevert(flags, null, now)).toBe(false)
   })
@@ -239,10 +238,12 @@ describe('shouldAutoRevert', () => {
   it('returns true with mixed flag types when enough non-excessive_distance flags', () => {
     const now = 1000000
     const flags = [
-      { reason: 'outside_viewport', time: now - 100 },
+      ...Array.from({ length: S.AUTO_REVERT.FLAG_COUNT - 1 }, (_, i) => ({
+        reason: 'outside_viewport',
+        time: now - (i + 1) * 10
+      })),
       { reason: 'excessive_distance', time: now - 50 },
-      { reason: 'implausible_viewport', time: now - 25 },
-      { reason: 'outside_viewport', time: now }
+      { reason: 'implausible_viewport', time: now - 25 }
     ]
     expect(S.shouldAutoRevert(flags, null, now)).toBe(true)
   })
@@ -321,5 +322,158 @@ describe('countRecentFlags', () => {
     S.addSessionFlag(state, 'outside_viewport', 1000000)
     const count = S.countRecentFlags(state, 60000, 1000000)
     expect(count).toBe(2)
+  })
+})
+
+describe('RATE_LIMITS configuration', () => {
+  it('has relaxed session burst limit for natural tapping', () => {
+    expect(S.RATE_LIMITS.SESSION_BURST.max).toBe(25)
+    expect(S.RATE_LIMITS.SESSION_BURST.windowMs).toBe(1000)
+  })
+
+  it('has relaxed sustained limit for pixel art coloring', () => {
+    expect(S.RATE_LIMITS.SESSION_SUSTAINED.max).toBe(240)
+    expect(S.RATE_LIMITS.SESSION_SUSTAINED.windowMs).toBe(60000)
+  })
+
+  it('has relaxed IP write limit for multi-user households', () => {
+    expect(S.RATE_LIMITS.IP_WRITE.max).toBe(480)
+    expect(S.RATE_LIMITS.IP_WRITE.windowMs).toBe(60000)
+  })
+})
+
+describe('AUTO_REVERT configuration', () => {
+  it('has relaxed burst max to reserve auto-revert for machine flooding', () => {
+    expect(S.AUTO_REVERT.BURST_MAX).toBe(150)
+    expect(S.AUTO_REVERT.BURST_WINDOW_MS).toBe(5000)
+  })
+
+  it('has relaxed distance threshold for fast panning', () => {
+    expect(S.AUTO_REVERT.DISTANCE_MAX_M).toBe(10000)
+    expect(S.AUTO_REVERT.DISTANCE_WINDOW_MS).toBe(5000)
+  })
+
+  it('has relaxed flag count and narrowed accumulation window', () => {
+    expect(S.AUTO_REVERT.FLAG_COUNT).toBe(10)
+    expect(S.AUTO_REVERT.FLAG_WINDOW_MS).toBe(120000)
+  })
+})
+
+describe('checkAutoRevertCondition', () => {
+  it('bypasses auto-revert entirely for private spaces', () => {
+    const state = makeState({ lastPaintLat: 10, lastPaintLng: 10, lastPaintTime: 1000 })
+    const result = S.checkAutoRevertCondition({
+      space: 'testspace123',
+      burstCount: 200,
+      state,
+      lat: 50,
+      lng: 50,
+      now: 1500,
+      recentFlagsCount: 50
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns burst when burstCount > BURST_MAX in global space', () => {
+    const result = S.checkAutoRevertCondition({
+      space: null,
+      burstCount: S.AUTO_REVERT.BURST_MAX + 1,
+      state: null,
+      lat: 52.52,
+      lng: 13.41,
+      now: 1000,
+      recentFlagsCount: 0
+    })
+    expect(result).toBe('burst')
+  })
+
+  it('returns distance when paint is outside viewport and distance exceeds threshold within window', () => {
+    const state = makeState({
+      viewport: { n: 52.53, s: 52.51, e: 13.42, w: 13.40 },
+      lastPaintLat: 52.52,
+      lastPaintLng: 13.41,
+      lastPaintTime: 1000
+    })
+    // 52.70 is ~20km away (well over 10km) and outside viewport
+    const result = S.checkAutoRevertCondition({
+      space: null,
+      burstCount: 5,
+      state,
+      lat: 52.70,
+      lng: 13.41,
+      now: 2000, // 1s elapsed
+      recentFlagsCount: 0
+    })
+    expect(result).toBe('distance')
+  })
+
+  it('does not return distance if paint is within viewport', () => {
+    const state = makeState({
+      viewport: { n: 52.53, s: 52.51, e: 13.42, w: 13.40 },
+      lastPaintLat: 52.52,
+      lastPaintLng: 13.41,
+      lastPaintTime: 1000
+    })
+    const result = S.checkAutoRevertCondition({
+      space: null,
+      burstCount: 5,
+      state,
+      lat: 52.525,
+      lng: 13.415,
+      now: 2000,
+      recentFlagsCount: 0
+    })
+    expect(result).toBeNull()
+  })
+
+  it('does not return distance if elapsed time >= 5s', () => {
+    const state = makeState({
+      viewport: { n: 52.53, s: 52.51, e: 13.42, w: 13.40 },
+      lastPaintLat: 52.52,
+      lastPaintLng: 13.41,
+      lastPaintTime: 1000
+    })
+    const result = S.checkAutoRevertCondition({
+      space: null,
+      burstCount: 5,
+      state,
+      lat: 52.70,
+      lng: 13.41,
+      now: 7000, // 6s elapsed
+      recentFlagsCount: 0
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns flags when recentFlagsCount >= FLAG_COUNT', () => {
+    const result = S.checkAutoRevertCondition({
+      space: null,
+      burstCount: 5,
+      state: null,
+      lat: 52.52,
+      lng: 13.41,
+      now: 1000,
+      recentFlagsCount: S.AUTO_REVERT.FLAG_COUNT
+    })
+    expect(result).toBe('flags')
+  })
+
+  it('returns null when all conditions are within normal limits', () => {
+    const state = makeState({
+      viewport: { n: 52.53, s: 52.51, e: 13.42, w: 13.40 },
+      lastPaintLat: 52.52,
+      lastPaintLng: 13.41,
+      lastPaintTime: 1000
+    })
+    const result = S.checkAutoRevertCondition({
+      space: null,
+      burstCount: 10,
+      state,
+      lat: 52.521,
+      lng: 13.411,
+      now: 2000,
+      recentFlagsCount: 2
+    })
+    expect(result).toBeNull()
   })
 })

@@ -1190,11 +1190,22 @@ async function proceedToMap(geoResult, pixelsPromise) {
   const vb = getViewportBounds();
   sendViewport(vb);
 
+  let _wsViewportTimer = null;
+  function syncViewportWS() {
+    if (_wsViewportTimer) clearTimeout(_wsViewportTimer);
+    _wsViewportTimer = setTimeout(() => {
+      const b = getViewportBounds();
+      if (b) sendViewport(b);
+    }, CONFIG.VIEWPORT_WS_DEBOUNCE_MS || 50);
+  }
+
   map.on('moveend', () => {
+    syncViewportWS();
     scheduleViewportRefresh();
     updateUndoButtonState();
   });
   map.on('zoomend', () => {
+    syncViewportWS();
     scheduleViewportRefresh();
     updateUndoButtonState();
   });

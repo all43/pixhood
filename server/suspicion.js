@@ -1,16 +1,16 @@
 const AUTO_REVERT = {
-  BURST_MAX: 30,
+  BURST_MAX: 150,
   BURST_WINDOW_MS: 5000,
-  DISTANCE_MAX_M: 2000,
+  DISTANCE_MAX_M: 10000,
   DISTANCE_WINDOW_MS: 5000,
-  FLAG_COUNT: 3,
-  FLAG_WINDOW_MS: 600000
+  FLAG_COUNT: 10,
+  FLAG_WINDOW_MS: 120000
 }
 
 const RATE_LIMITS = {
-  SESSION_BURST: { windowMs: 1000, max: 10 },
-  SESSION_SUSTAINED: { windowMs: 60000, max: 60 },
-  IP_WRITE: { windowMs: 60000, max: 120 },
+  SESSION_BURST: { windowMs: 1000, max: 25 },
+  SESSION_SUSTAINED: { windowMs: 60000, max: 240 },
+  IP_WRITE: { windowMs: 60000, max: 480 },
   IP_READ: { windowMs: 60000, max: 300 }
 }
 
@@ -130,6 +130,26 @@ function countRecentFlags (state, windowMs, now) {
   return state.flags.filter(f => f.reason !== 'excessive_distance').length
 }
 
+function checkAutoRevertCondition ({ space, burstCount, state, lat, lng, now, recentFlagsCount }) {
+  if (space) return null
+
+  if (burstCount != null && burstCount > AUTO_REVERT.BURST_MAX) return 'burst'
+
+  if (state && state.lastPaintLat != null && state.lastPaintTime != null) {
+    const distance = haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng)
+    const elapsed = (now - state.lastPaintTime) / 1000
+    const withinVp = isWithinViewport(lat, lng, state.viewport)
+    if (!withinVp && elapsed > 0 && elapsed < AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
+        distance > AUTO_REVERT.DISTANCE_MAX_M) {
+      return 'distance'
+    }
+  }
+
+  if (recentFlagsCount != null && recentFlagsCount >= AUTO_REVERT.FLAG_COUNT) return 'flags'
+
+  return null
+}
+
 module.exports = {
   AUTO_REVERT,
   RATE_LIMITS,
@@ -143,6 +163,7 @@ module.exports = {
   hasFreePass,
   useFreePass,
   shouldAutoRevert,
+  checkAutoRevertCondition,
   createSessionState,
   updateSessionPaint,
   updateSessionViewport,

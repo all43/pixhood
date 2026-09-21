@@ -317,9 +317,9 @@ Every paint is logged with the previous pixel state for potential revert. The so
 
 | Limiter | Threshold | Mechanism |
 |---------|-----------|-----------|
-| Per-session burst | 10 paints/sec | Paint log `ZCOUNT` in 1s window |
-| Per-session sustained | 60 paints/min | Paint log `ZCOUNT` in 60s window |
-| Per-IP per-space writes | 120/min | `INCR` + `EXPIRE` on `space:ratelimit:write:<ip>:<space>` |
+| Per-session burst | 25 paints/sec | Paint log `ZCOUNT` in 1s window |
+| Per-session sustained | 240 paints/min | Paint log `ZCOUNT` in 60s window |
+| Per-IP per-space writes | 480/min | `INCR` + `EXPIRE` on `space:ratelimit:write:<ip>:<space>` |
 | Per-IP reads | 300/min | `INCR` + `EXPIRE` on `ratelimit:read:<ip>` (global) |
 | Per-IP space creation | 10/min | `INCR` + `EXPIRE` on `ratelimit:space_create:<ip>` |
 
@@ -349,17 +349,17 @@ Additionally, `revertSession` and `undoLastPaints` skip protected tiles (check `
 
 ### Auto-revert
 
-Triggered after logging a paint but before saving it. Three conditions, any one triggers immediate revert of all session paints + 1-hour block:
+Triggered after logging a paint but before saving it. Bypassed entirely in private spaces (`space != null`). On public map, three conditions can trigger immediate revert of all session paints + 5-minute block:
 
 | Trigger | Threshold | Window |
 |---------|-----------|--------|
-| Extreme burst | >30 paints | 5 seconds |
-| Impossible distance | >2km between consecutive paints outside viewport | 5 seconds |
-| Accumulated flags | ≥3 non-excessive_distance suspicion flags | 10 minutes |
+| Extreme burst | >150 paints | 5 seconds |
+| Impossible distance | >10km between consecutive paints outside viewport | 5 seconds |
+| Accumulated flags | ≥10 non-excessive_distance suspicion flags | 2 minutes |
 
-`excessive_distance` flags are excluded from the accumulated-flags count — only `outside_viewport` and `implausible_viewport` count toward the ≥3 threshold. The first `excessive_distance` per 5-minute window is forgiven entirely (free pass).
+`excessive_distance` flags are excluded from the accumulated-flags count — only `outside_viewport` and `implausible_viewport` count toward the ≥10 threshold. The first `excessive_distance` per 5-minute window is forgiven entirely (free pass).
 
-Blocked sessions have their paints reverted and receive `{ type: "blocked" }` WS message. Subsequent paints are silently rejected. Block expires after 1 hour (`blocked:<sessionId>` key with TTL). Double auto-reverts from concurrent paint handlers are prevented by an in-memory `revertingSessions` guard.
+Blocked sessions have their paints reverted and receive `{ type: "blocked" }` WS message. Subsequent paints are silently rejected. Block expires after 5 minutes (`blocked:<sessionId>` key with TTL). Double auto-reverts from concurrent paint handlers are prevented by an in-memory `revertingSessions` guard.
 
 ### Revert
 

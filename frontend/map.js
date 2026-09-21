@@ -515,12 +515,42 @@ function revertOptimisticPaint(entry) {
 }
 
 let _protectedHoverTimer = null;
+let _lastTapKey = null;
+let _lastTapTime = 0;
 
 function _capturePrev(tileKey) {
   const pd = pixelLayers[tileKey] && pixelLayers[tileKey]._pixelData;
   if (!pd) return null;
   const ch = childrenCache[tileKey];
   return { lat: pd.lat, lng: pd.lng, color: pd.color, children: ch && ch.length > 0 ? ch.map(c => ({ ...c })) : null };
+}
+
+function shouldSkipPaint({
+  color,
+  eraseColor,
+  prev,
+  isSubGrid,
+  childKey,
+  existingChildColor,
+  parentColor,
+  hasChildren,
+  lastTapKey,
+  lastTapTime,
+  now,
+  tapDebounceMs
+}) {
+  if (color === eraseColor) {
+    if (!prev) return true;
+    if (childKey === lastTapKey && (now - lastTapTime) < tapDebounceMs) return true;
+    return false;
+  }
+  if (childKey === lastTapKey && (now - lastTapTime) < tapDebounceMs) return true;
+  if (isSubGrid) {
+    if (existingChildColor === color) return true;
+  } else {
+    if (parentColor === color && !hasChildren) return true;
+  }
+  return false;
 }
 
 function handleMapClick(e) {
@@ -539,10 +569,27 @@ function handleMapClick(e) {
   }
 
   const color = getSelectedColor();
+  const now = Date.now();
+  const debounceMs = CONFIG.TAP_DEBOUNCE_MS || 80;
 
   if (color === CONFIG.ERASE_COLOR) {
     const tile = snapToTile(lat, lng);
     const prev = _capturePrev(tile.key);
+    if (shouldSkipPaint({
+      color,
+      eraseColor: CONFIG.ERASE_COLOR,
+      prev,
+      isSubGrid: false,
+      childKey: tile.key,
+      lastTapKey: _lastTapKey,
+      lastTapTime: _lastTapTime,
+      now,
+      tapDebounceMs: debounceMs
+    })) return;
+
+    _lastTapKey = tile.key;
+    _lastTapTime = now;
+
     removePixel(tile.key);
     writeErasePixel(lat, lng, prev);
     recordPaint(lat, lng);
@@ -552,6 +599,28 @@ function handleMapClick(e) {
   if (map.getZoom() >= CONFIG.SUB_GRID_ZOOM) {
     const tile = snapToTile(lat, lng);
     const sub = snapToSubTile(tile.key, lat, lng);
+    const childKey = `${tile.key}_${sub.subX}_${sub.subY}`;
+
+    const ch = childrenCache[tile.key];
+    const existing = ch && ch.find(c => c.subX === sub.subX && c.subY === sub.subY);
+    const existingChildColor = existing ? existing.color : null;
+
+    if (shouldSkipPaint({
+      color,
+      eraseColor: CONFIG.ERASE_COLOR,
+      prev: null,
+      isSubGrid: true,
+      childKey,
+      existingChildColor,
+      lastTapKey: _lastTapKey,
+      lastTapTime: _lastTapTime,
+      now,
+      tapDebounceMs: debounceMs
+    })) return;
+
+    _lastTapKey = childKey;
+    _lastTapTime = now;
+
     const subBounds = subTileBounds(tile.key, sub.subX, sub.subY);
     const prev = _capturePrev(tile.key);
     renderChildPixel(tile.key, sub.key, subBounds, color);
@@ -570,6 +639,28 @@ function handleMapClick(e) {
     recordPaint(lat, lng);
   } else {
     const tile = snapToTile(lat, lng);
+    const pd = pixelLayers[tile.key] && pixelLayers[tile.key]._pixelData;
+    const ch = childrenCache[tile.key];
+    const hasChildren = pd ? pd.hasChildren : (ch && ch.length > 0);
+    const parentColor = pd ? pd.color : null;
+
+    if (shouldSkipPaint({
+      color,
+      eraseColor: CONFIG.ERASE_COLOR,
+      prev: null,
+      isSubGrid: false,
+      childKey: tile.key,
+      parentColor,
+      hasChildren,
+      lastTapKey: _lastTapKey,
+      lastTapTime: _lastTapTime,
+      now,
+      tapDebounceMs: debounceMs
+    })) return;
+
+    _lastTapKey = tile.key;
+    _lastTapTime = now;
+
     const prev = _capturePrev(tile.key);
     renderPixel({ id: tile.key, lat: tile.lat, lng: tile.lng, color, hasChildren: false });
 
@@ -815,4 +906,8 @@ function updateBoundaryVisualization() {
     );
     boundaryRect.addTo(map);
   }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { shouldSkipPaint };
 }

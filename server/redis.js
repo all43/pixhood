@@ -2,7 +2,7 @@ const crypto = require('crypto')
 const { createClient } = require('redis')
 const { SPACE_SLUG_RE } = require('./shared/space')
 
-const client = createClient({
+let client = createClient({
   url: process.env.REDIS_URL || 'redis://localhost:6379',
   socket: {
     keepAlive: 15000,
@@ -646,7 +646,7 @@ async function erasePixel (tileKey, space) {
 }
 
 async function blockSession (sessionId) {
-  await client.set(`blocked:${sessionId}`, '1', { EX: 3600 })
+  await client.set(`blocked:${sessionId}`, '1', { EX: 300 })
 }
 
 async function isSessionBlocked (sessionId) {
@@ -1000,5 +1000,6 @@ module.exports = {
   ADMIN_REQUEST_MAX,
   ADMIN_REQUEST_WINDOW_MS,
   ADMIN_VERIFY_MAX,
-  ADMIN_VERIFY_WINDOW_MS
+  ADMIN_VERIFY_WINDOW_MS,
+  _setClientForTesting: mock => { client = mock }
 }

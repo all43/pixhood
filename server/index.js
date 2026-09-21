@@ -208,25 +208,22 @@ async function checkWriteRateLimits (ip, sessionId, space) {
   return null
 }
 
-async function shouldAutoRevert (sessionId, lat, lng) {
+async function shouldAutoRevert (sessionId, lat, lng, space) {
+  if (space) return null
+
   const burst = await redis.countPaintsInWindow(sessionId, S.AUTO_REVERT.BURST_WINDOW_MS)
-  if (burst > S.AUTO_REVERT.BURST_MAX) return 'burst'
-
   const state = sessionStates.get(sessionId)
-  if (state && state.lastPaintLat != null && state.lastPaintTime != null) {
-    const distance = S.haversineDistance(state.lastPaintLat, state.lastPaintLng, lat, lng)
-    const elapsed = (Date.now() - state.lastPaintTime) / 1000
-    const withinVp = S.isWithinViewport(lat, lng, state.viewport)
-    if (!withinVp && elapsed > 0 && elapsed < S.AUTO_REVERT.DISTANCE_WINDOW_MS / 1000 &&
-        distance > S.AUTO_REVERT.DISTANCE_MAX_M) {
-      return 'distance'
-    }
-  }
-
   const recentFlags = countRecentFlags(sessionId, S.AUTO_REVERT.FLAG_WINDOW_MS)
-  if (recentFlags >= S.AUTO_REVERT.FLAG_COUNT) return 'flags'
 
-  return null
+  return S.checkAutoRevertCondition({
+    space,
+    burstCount: burst,
+    state,
+    lat,
+    lng,
+    now: Date.now(),
+    recentFlagsCount: recentFlags
+  })
 }
 
 function broadcastRevertResult (result) {
@@ -314,7 +311,7 @@ async function handlePaintParent (ws, msg) {
     previousChildren: prevChildren
   })
 
-  const autoRevertReason = await shouldAutoRevert(sessionId, pixel.lat, pixel.lng)
+  const autoRevertReason = await shouldAutoRevert(sessionId, pixel.lat, pixel.lng, space)
   if (autoRevertReason) {
     if (revertingSessions.has(sessionId)) return
     revertingSessions.add(sessionId)
@@ -436,7 +433,7 @@ async function handlePaintChild (ws, msg) {
     previousSubY: prevChild ? prevChild.subY : null
   })
 
-  const autoRevertReason = await shouldAutoRevert(sessionId, childPixel.lat, childPixel.lng)
+  const autoRevertReason = await shouldAutoRevert(sessionId, childPixel.lat, childPixel.lng, space)
   if (autoRevertReason) {
     if (revertingSessions.has(sessionId)) return
     revertingSessions.add(sessionId)
@@ -550,7 +547,7 @@ async function handlePaintErase (ws, msg) {
 
   await redis.erasePixel(tileKey, space)
 
-  const autoRevertReason = await shouldAutoRevert(sessionId, lat, lng)
+  const autoRevertReason = await shouldAutoRevert(sessionId, lat, lng, space)
   if (autoRevertReason) {
     if (revertingSessions.has(sessionId)) return
     revertingSessions.add(sessionId)
